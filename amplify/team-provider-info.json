@@ -25,7 +25,8 @@
       "storage": {
         "weddingPhotos": {},
         "weddingUsers": {},
-        "Photos": {}
+        "Photos": {},
+        "Favorites": {}
       },
       "api": {
         "weddingAPI": {}

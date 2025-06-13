@@ -1,0 +1,22 @@
+{
+  "resourceName": "Favorites",
+  "tableName": "Favorites",
+  "partitionKey": {
+    "fieldName": "favoriteId",
+    "fieldType": "string"
+  },
+  "gsi": [
+    {
+      "name": "photoId-index",
+      "partitionKey": {
+        "fieldName": "favoriteId",
+        "fieldType": "string"
+      },
+      "sortKey": {
+        "fieldName": "userId",
+        "fieldType": "string"
+      }
+    }
+  ],
+  "triggerFunctions": []
+}
