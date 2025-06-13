@@ -38,23 +38,23 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
       const photoId = uuidv4();
       const fileKey = `photos/${photoId}-${selectedFile.name}`;
 
-      // S3にファイルをアップロード
+      // S3にファイルをアップロード（metadataから日本語文字を除去）
       const result = await uploadData({
         key: fileKey,
         data: selectedFile,
         options: {
           metadata: {
             uploadedBy: user.username,
-            caption: caption,
+            // caption と uploaderName は日本語が含まれる可能性があるため削除
             uploadedAt: new Date().toISOString(),
-            uploaderName: userInfo.name,
+            photoId: photoId, // 必要であれば追加
           },
         },
       }).result;
 
       console.log("S3 upload successful:", result);
 
-      // DynamoDBに写真メタデータを保存
+      // DynamoDBに写真メタデータを保存（日本語文字はここで保存）
       const response = await fetch(`${awsconfig.aws_cloud_logic_custom[0].endpoint}/photos/save`, {
         method: "POST",
         headers: {
@@ -63,9 +63,9 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
         body: JSON.stringify({
           photoId: photoId,
           uploadedBy: user.username,
-          caption: caption,
+          caption: caption, // 日本語をDynamoDBに保存
           s3Key: fileKey,
-          uploaderName: userInfo.name,
+          uploaderName: userInfo.name, // 日本語をDynamoDBに保存
         }),
       });
 

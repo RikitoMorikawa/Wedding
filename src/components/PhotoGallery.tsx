@@ -40,6 +40,8 @@ export default function PhotoGallery({ refreshTrigger }: PhotoGalleryProps) {
         throw new Error(result.message || "Failed to fetch photos");
       }
 
+      console.log("DynamoDB photos result:", result.photos);
+
       // 各写真のS3 URLを取得
       const photosWithUrls = await Promise.all(
         result.photos.map(async (photo: Photo) => {
@@ -50,7 +52,7 @@ export default function PhotoGallery({ refreshTrigger }: PhotoGalleryProps) {
               url: urlResult.url.toString(),
             };
           } catch (error) {
-            console.error("Error getting photo URL:", error);
+            console.error("Error getting photo URL for", photo.s3Key, ":", error);
             return {
               ...photo,
               url: undefined,
@@ -59,11 +61,12 @@ export default function PhotoGallery({ refreshTrigger }: PhotoGalleryProps) {
         })
       );
 
-      // アップロード日時で降順ソート
+      // URLが取得できた写真のみフィルタリングしてソート
       const sortedPhotos = photosWithUrls
         .filter((photo) => photo.url) // URLが取得できた写真のみ
         .sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime());
 
+      console.log("Processed photos with URLs:", sortedPhotos);
       setPhotos(sortedPhotos);
     } catch (error) {
       console.error("Error fetching photos:", error);
@@ -96,7 +99,7 @@ export default function PhotoGallery({ refreshTrigger }: PhotoGalleryProps) {
               strokeLinecap="round"
               strokeLinejoin="round"
               strokeWidth={2}
-              d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+              d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 002 2v12a2 2 0 002 2z"
             />
           </svg>
         </div>
@@ -131,8 +134,8 @@ export default function PhotoGallery({ refreshTrigger }: PhotoGalleryProps) {
 
       {/* フルスクリーン表示モーダル */}
       {selectedPhoto && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setSelectedPhoto(null)}>
-          <div className="relative max-w-4xl w-full h-full flex flex-col">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="relative max-w-4xl w-full h-full flex flex-col" onClick={(e) => e.stopPropagation()}>
             {/* ヘッダー */}
             <div className="flex justify-between items-center p-4">
               <div className="text-white">
@@ -158,33 +161,20 @@ export default function PhotoGallery({ refreshTrigger }: PhotoGalleryProps) {
             </div>
 
             {/* 写真 */}
-            <div className="flex-1 flex items-center justify-center">
+            <div className="flex-1 flex items-center justify-center relative px-4" style={{ paddingBottom: selectedPhoto.caption ? "140px" : "20px" }}>
               <img src={selectedPhoto.url} alt={selectedPhoto.caption || "Wedding photo"} className="max-w-full max-h-full object-contain" />
             </div>
 
-            {/* フッター（キャプションと投稿者情報） */}
-            <div className="bg-gradient-to-t from-black/80 to-transparent p-6">
-              <div className="text-center text-white">
-                <p className="font-semibold text-lg mb-2">{selectedPhoto.uploaderName || selectedPhoto.uploadedBy}</p>
-                {selectedPhoto.caption && <p className="text-white/90 mb-2">{selectedPhoto.caption}</p>}
-                <p className="text-white/70 text-sm">
-                  {new Date(selectedPhoto.uploadedAt).toLocaleDateString("ja-JP", {
-                    year: "numeric",
-                    month: "long",
-                    day: "numeric",
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}
-                </p>
+            {/* キャプション - 下部に固定表示（3行分の高さ） */}
+            {selectedPhoto.caption && (
+              <div className="absolute bottom-4 left-4 right-4">
+                <div className="bg-gradient-to-r from-pink-500/90 to-rose-500/90 backdrop-blur-sm rounded-2xl px-5 py-5 shadow-lg max-h-32">
+                  <div className="max-h-20 overflow-y-auto scrollbar-thin scrollbar-thumb-white/30 scrollbar-track-transparent">
+                    <p className="text-white text-xs font-medium text-center leading-relaxed whitespace-pre-wrap">{selectedPhoto.caption}</p>
+                  </div>
+                </div>
               </div>
-            </div>
-
-            {/* スワイプヒント */}
-            <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2">
-              <div className="bg-white/20 backdrop-blur-sm rounded-full px-4 py-2">
-                <p className="text-white text-xs">タップして閉じる</p>
-              </div>
-            </div>
+            )}
           </div>
         </div>
       )}
