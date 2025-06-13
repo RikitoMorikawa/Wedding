@@ -53,14 +53,11 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
     setSelectedFiles((prev) => [...prev, ...newFiles]);
   };
 
-  const removeFile = (id: string) => {
-    setSelectedFiles((prev) => {
-      const fileToRemove = prev.find((f) => f.id === id);
-      if (fileToRemove) {
-        URL.revokeObjectURL(fileToRemove.preview);
-      }
-      return prev.filter((f) => f.id !== id);
-    });
+  const removeAllFiles = () => {
+    selectedFiles.forEach((file) => URL.revokeObjectURL(file.preview));
+    setSelectedFiles([]);
+    const fileInput = document.getElementById("file-input") as HTMLInputElement;
+    if (fileInput) fileInput.value = "";
   };
 
   const animateButton = () => {
@@ -185,6 +182,9 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
     }
   };
 
+  // 総ファイルサイズを計算（MB）
+  const totalFileSize = selectedFiles.reduce((sum, file) => sum + file.file.size, 0) / (1024 * 1024);
+
   return (
     <>
       {/* バブリーボタン用CSS */}
@@ -302,11 +302,12 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
         }
       `}</style>
 
-      <div className="space-y-6">
+      <div className="space-y-6 max-h-[60vh] overflow-y-auto my-2">
         {/* ファイル選択エリア */}
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-3">
             写真を選択 ({selectedFiles.length}/{MAX_FILES}枚)
+            {selectedFiles.length > 0 && <span className="text-xs text-gray-500 ml-2">({totalFileSize.toFixed(1)}MB)</span>}
           </label>
 
           <label
@@ -332,50 +333,53 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
           </label>
         </div>
 
-        {/* 選択された写真のプレビュー */}
+        {/* 選択されたファイルの情報（プレビューなし） */}
         {selectedFiles.length > 0 && (
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-3">選択された写真</label>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <div className="bg-pink-50/50 rounded-2xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-gray-700">選択中の写真 ({selectedFiles.length}枚)</h3>
+              <button onClick={removeAllFiles} className="text-xs text-red-500 hover:text-red-700 font-medium" disabled={uploading}>
+                すべて削除
+              </button>
+            </div>
+
+            <div className="space-y-2 max-h-32 overflow-y-auto">
               {selectedFiles.map((selectedFile, index) => (
-                <div key={selectedFile.id} className="relative group">
-                  <div className="relative aspect-square bg-gray-100 rounded-xl overflow-hidden">
-                    <img src={selectedFile.preview} alt={`Preview ${index + 1}`} className="w-full h-full object-cover" />
-
-                    {/* メイン写真表示 */}
-                    {index === 0 && (
-                      <div className="absolute top-2 left-2">
-                        <div className="bg-pink-500 text-white text-xs px-2 py-1 rounded-lg font-medium">メイン</div>
-                      </div>
-                    )}
-
-                    {/* 削除ボタン */}
-                    <button
-                      onClick={() => removeFile(selectedFile.id)}
-                      className="absolute top-2 right-2 w-6 h-6 bg-black/50 backdrop-blur-sm rounded-full flex items-center justify-center text-white hover:bg-black/70 transition-colors"
-                    >
-                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-
-                    {/* アップロード進捗 */}
-                    {uploading && uploadProgress[selectedFile.id] !== undefined && (
-                      <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
-                        {uploadProgress[selectedFile.id] === -1 ? (
-                          <div className="text-red-400 text-xs">エラー</div>
-                        ) : uploadProgress[selectedFile.id] === 100 ? (
-                          <div className="text-green-400 text-xs">完了</div>
-                        ) : (
-                          <div className="text-white text-xs">{uploadProgress[selectedFile.id]}%</div>
-                        )}
-                      </div>
-                    )}
+                <div key={selectedFile.id} className="flex items-center justify-between bg-white rounded-lg p-2">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-8 h-8 bg-pink-100 rounded-lg flex items-center justify-center">
+                      {index === 0 ? <span className="text-pink-600 text-xs font-bold">★</span> : <span className="text-pink-600 text-xs">{index + 1}</span>}
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-gray-800 truncate max-w-48">{selectedFile.file.name}</p>
+                      <p className="text-xs text-gray-500">
+                        {(selectedFile.file.size / (1024 * 1024)).toFixed(1)}MB
+                        {index === 0 && <span className="ml-2 text-pink-600">（メイン写真）</span>}
+                      </p>
+                    </div>
                   </div>
 
-                  <div className="absolute bottom-1 left-1 right-1">
-                    <p className="text-white text-xs bg-black/50 backdrop-blur-sm rounded px-1 py-0.5 truncate">{selectedFile.file.name}</p>
-                  </div>
+                  {/* アップロード進捗 */}
+                  {uploading && uploadProgress[selectedFile.id] !== undefined && (
+                    <div className="flex items-center space-x-2">
+                      {uploadProgress[selectedFile.id] === -1 ? (
+                        <span className="text-red-500 text-xs">エラー</span>
+                      ) : uploadProgress[selectedFile.id] === 100 ? (
+                        <svg className="w-4 h-4 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                          <path
+                            fillRule="evenodd"
+                            d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                            clipRule="evenodd"
+                          />
+                        </svg>
+                      ) : (
+                        <div className="flex items-center space-x-1">
+                          <div className="w-3 h-3 border border-pink-300 border-t-pink-600 rounded-full animate-spin"></div>
+                          <span className="text-xs text-gray-600">{uploadProgress[selectedFile.id]}%</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -397,8 +401,10 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
             disabled={uploading}
           />
         </div>
+      </div>
 
-        {/* バブリーアップロードボタン */}
+      {/* 固定位置のアップロードボタン */}
+      <div className="sticky bottom-0 bg-white pt-4 mt-6 border-t border-gray-100">
         <button ref={buttonRef} onClick={handleUpload} disabled={selectedFiles.length === 0 || uploading} className="bubbly-button">
           {uploading ? (
             <div className="flex items-center justify-center space-x-2">

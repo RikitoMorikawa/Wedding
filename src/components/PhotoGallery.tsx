@@ -171,7 +171,7 @@ export default function PhotoGallery({ refreshTrigger }: PhotoGalleryProps) {
   return (
     <>
       {/* アルバム一覧表示 */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 mx-2">
         {albums.map((album) => (
           <div
             key={album.albumId}
