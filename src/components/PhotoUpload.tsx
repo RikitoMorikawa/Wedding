@@ -15,27 +15,57 @@ interface PhotoUploadProps {
   userInfo: { passcode: string; name: string } | null;
 }
 
+interface SelectedFile {
+  file: File;
+  id: string;
+  preview: string;
+}
+
+const MAX_FILES = 10;
+
 export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadProps) {
   const [uploading, setUploading] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<SelectedFile[]>([]);
   const [caption, setCaption] = useState("");
+  const [uploadProgress, setUploadProgress] = useState<{ [key: string]: number }>({});
   const buttonRef = useRef<HTMLButtonElement>(null);
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file && file.type.startsWith("image/")) {
-      setSelectedFile(file);
-    } else {
+    const files = Array.from(event.target.files || []);
+    const imageFiles = files.filter((file) => file.type.startsWith("image/"));
+
+    if (imageFiles.length === 0) {
       alert("画像ファイルを選択してください");
+      return;
     }
+
+    if (selectedFiles.length + imageFiles.length > MAX_FILES) {
+      alert(`最大${MAX_FILES}枚まで選択できます`);
+      return;
+    }
+
+    const newFiles: SelectedFile[] = imageFiles.map((file) => ({
+      file,
+      id: uuidv4(),
+      preview: URL.createObjectURL(file),
+    }));
+
+    setSelectedFiles((prev) => [...prev, ...newFiles]);
+  };
+
+  const removeFile = (id: string) => {
+    setSelectedFiles((prev) => {
+      const fileToRemove = prev.find((f) => f.id === id);
+      if (fileToRemove) {
+        URL.revokeObjectURL(fileToRemove.preview);
+      }
+      return prev.filter((f) => f.id !== id);
+    });
   };
 
   const animateButton = () => {
     if (buttonRef.current) {
-      // アニメーションクラスをリセット
       buttonRef.current.classList.remove("animate");
-
-      // 少し遅らせてからアニメーションクラスを追加
       requestAnimationFrame(() => {
         if (buttonRef.current) {
           buttonRef.current.classList.add("animate");
@@ -52,63 +82,101 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
   const handleUpload = async (e: React.MouseEvent<HTMLButtonElement>) => {
     e.preventDefault();
 
-    if (!selectedFile || !userInfo) return;
+    if (selectedFiles.length === 0 || !userInfo) return;
 
-    // バブリーアニメーションを開始
     animateButton();
-
     setUploading(true);
+
     try {
       const user = await getCurrentUser();
-      const photoId = uuidv4();
-      const fileKey = `photos/${photoId}-${selectedFile.name}`;
+      const albumId = uuidv4(); // アルバムID（複数枚の場合のグループID）
+      const uploadedAt = new Date().toISOString();
 
-      // S3にファイルをアップロード（metadataから日本語文字を除去）
-      const result = await uploadData({
-        key: fileKey,
-        data: selectedFile,
-        options: {
-          metadata: {
-            uploadedBy: user.username,
-            uploadedAt: new Date().toISOString(),
-            photoId: photoId,
-          },
-        },
-      }).result;
+      // 複数の写真を順次アップロード
+      const uploadPromises = selectedFiles.map(async (selectedFile, index) => {
+        const photoId = uuidv4();
+        const fileKey = `photos/${albumId}/${photoId}-${selectedFile.file.name}`;
 
-      console.log("S3 upload successful:", result);
+        try {
+          // 進捗更新
+          setUploadProgress((prev) => ({ ...prev, [selectedFile.id]: 0 }));
 
-      // DynamoDBに写真メタデータを保存（日本語文字はここで保存）
-      const response = await fetch(`${awsconfig.aws_cloud_logic_custom[0].endpoint}/photos/save`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          photoId: photoId,
-          uploadedBy: user.username,
-          caption: caption,
-          s3Key: fileKey,
-          uploaderName: userInfo.name,
-        }),
+          // S3にファイルをアップロード
+          await uploadData({
+            key: fileKey,
+            data: selectedFile.file,
+            options: {
+              metadata: {
+                uploadedBy: user.username,
+                uploadedAt: uploadedAt,
+                photoId: photoId,
+                albumId: albumId,
+                photoIndex: index.toString(),
+              },
+            },
+          }).result;
+
+          // 進捗更新
+          setUploadProgress((prev) => ({ ...prev, [selectedFile.id]: 50 }));
+
+          // DynamoDBに写真メタデータを保存
+          const response = await fetch(`${awsconfig.aws_cloud_logic_custom[0].endpoint}/photos/save-album`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              photoId: photoId,
+              albumId: albumId,
+              uploadedBy: user.username,
+              caption: index === 0 ? caption : "", // 最初の写真にのみキャプションを設定
+              s3Key: fileKey,
+              uploaderName: userInfo.name,
+              uploadedAt: uploadedAt,
+              photoIndex: index,
+              totalPhotos: selectedFiles.length,
+              isMainPhoto: index === 0, // 最初の写真をメイン写真として設定
+            }),
+          });
+
+          const saveResult = await response.json();
+
+          if (!saveResult.success) {
+            throw new Error(saveResult.message || "Failed to save photo metadata");
+          }
+
+          // 進捗完了
+          setUploadProgress((prev) => ({ ...prev, [selectedFile.id]: 100 }));
+
+          return { success: true, photoId, fileKey };
+        } catch (error) {
+          console.error(`Error uploading ${selectedFile.file.name}:`, error);
+          setUploadProgress((prev) => ({ ...prev, [selectedFile.id]: -1 })); // エラー状態
+          return { success: false, error, photoId, fileKey };
+        }
       });
 
-      const saveResult = await response.json();
+      const results = await Promise.all(uploadPromises);
+      const successCount = results.filter((r) => r.success).length;
+      const failureCount = results.length - successCount;
 
-      if (!saveResult.success) {
-        throw new Error(saveResult.message || "Failed to save photo metadata");
-      }
+      console.log(`Upload completed: ${successCount} success, ${failureCount} failures`);
 
-      console.log("Photo metadata saved successfully");
-
-      // Reset form
-      setSelectedFile(null);
+      // フォームリセット
+      selectedFiles.forEach((file) => URL.revokeObjectURL(file.preview));
+      setSelectedFiles([]);
       setCaption("");
+      setUploadProgress({});
       const fileInput = document.getElementById("file-input") as HTMLInputElement;
       if (fileInput) fileInput.value = "";
 
       onUploadSuccess();
-      alert("写真をアップロードしました！");
+
+      if (failureCount === 0) {
+        alert(`${successCount}枚の写真をアップロードしました！`);
+      } else {
+        alert(`${successCount}枚の写真をアップロードしました。${failureCount}枚は失敗しました。`);
+      }
     } catch (error) {
       console.error("Upload error:", error);
       alert("アップロードに失敗しました");
@@ -237,66 +305,114 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
       <div className="space-y-6">
         {/* ファイル選択エリア */}
         <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-3">写真を選択</label>
+          <label className="block text-sm font-semibold text-gray-700 mb-3">
+            写真を選択 ({selectedFiles.length}/{MAX_FILES}枚)
+          </label>
 
-          {!selectedFile ? (
-            <label
-              htmlFor="file-input"
-              className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-pink-300 rounded-2xl cursor-pointer bg-pink-50/50 hover:bg-pink-50 transition-colors"
-            >
-              <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                <svg className="w-8 h-8 mb-2 text-pink-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                </svg>
-                <p className="text-sm text-pink-600 font-medium">写真をタップして選択</p>
-                <p className="text-xs text-gray-500">JPG, PNG, GIF</p>
-              </div>
-              <input id="file-input" type="file" accept="image/*" onChange={handleFileSelect} className="hidden" />
-            </label>
-          ) : (
-            <div className="relative">
-              <img src={URL.createObjectURL(selectedFile)} alt="Preview" className="w-full h-64 object-cover rounded-2xl" />
-              <button
-                onClick={() => {
-                  setSelectedFile(null);
-                  const fileInput = document.getElementById("file-input") as HTMLInputElement;
-                  if (fileInput) fileInput.value = "";
-                }}
-                className="absolute top-2 right-2 w-8 h-8 bg-black/50 backdrop-blur-sm rounded-full flex items-center justify-center text-white hover:bg-black/70 transition-colors"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-              <div className="absolute bottom-2 left-2 bg-black/50 backdrop-blur-sm rounded-lg px-2 py-1">
-                <p className="text-white text-xs">{selectedFile.name}</p>
-              </div>
+          <label
+            htmlFor="file-input"
+            className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-pink-300 rounded-2xl cursor-pointer bg-pink-50/50 hover:bg-pink-50 transition-colors"
+          >
+            <div className="flex flex-col items-center justify-center pt-5 pb-6">
+              <svg className="w-8 h-8 mb-2 text-pink-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              <p className="text-sm text-pink-600 font-medium">{selectedFiles.length === 0 ? "写真をタップして選択" : "写真を追加"}</p>
+              <p className="text-xs text-gray-500">JPG, PNG, GIF（最大{MAX_FILES}枚）</p>
             </div>
-          )}
+            <input
+              id="file-input"
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={handleFileSelect}
+              className="hidden"
+              disabled={selectedFiles.length >= MAX_FILES}
+            />
+          </label>
         </div>
+
+        {/* 選択された写真のプレビュー */}
+        {selectedFiles.length > 0 && (
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-3">選択された写真</label>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {selectedFiles.map((selectedFile, index) => (
+                <div key={selectedFile.id} className="relative group">
+                  <div className="relative aspect-square bg-gray-100 rounded-xl overflow-hidden">
+                    <img src={selectedFile.preview} alt={`Preview ${index + 1}`} className="w-full h-full object-cover" />
+
+                    {/* メイン写真表示 */}
+                    {index === 0 && (
+                      <div className="absolute top-2 left-2">
+                        <div className="bg-pink-500 text-white text-xs px-2 py-1 rounded-lg font-medium">メイン</div>
+                      </div>
+                    )}
+
+                    {/* 削除ボタン */}
+                    <button
+                      onClick={() => removeFile(selectedFile.id)}
+                      className="absolute top-2 right-2 w-6 h-6 bg-black/50 backdrop-blur-sm rounded-full flex items-center justify-center text-white hover:bg-black/70 transition-colors"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+
+                    {/* アップロード進捗 */}
+                    {uploading && uploadProgress[selectedFile.id] !== undefined && (
+                      <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                        {uploadProgress[selectedFile.id] === -1 ? (
+                          <div className="text-red-400 text-xs">エラー</div>
+                        ) : uploadProgress[selectedFile.id] === 100 ? (
+                          <div className="text-green-400 text-xs">完了</div>
+                        ) : (
+                          <div className="text-white text-xs">{uploadProgress[selectedFile.id]}%</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="absolute bottom-1 left-1 right-1">
+                    <p className="text-white text-xs bg-black/50 backdrop-blur-sm rounded px-1 py-0.5 truncate">{selectedFile.file.name}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* キャプション入力 */}
         <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-3">コメント（任意）</label>
+          <label className="block text-sm font-semibold text-gray-700 mb-3">
+            コメント（任意）
+            {selectedFiles.length > 1 && <span className="text-xs text-gray-500 ml-2">※アルバム全体のコメントです</span>}
+          </label>
           <textarea
             value={caption}
             onChange={(e) => setCaption(e.target.value)}
             rows={3}
             className="w-full px-4 py-3 border-2 border-gray-200 rounded-2xl focus:outline-none focus:border-pink-400 focus:ring-4 focus:ring-pink-100 transition-all duration-200 bg-gray-50/50 resize-none"
-            placeholder="この写真について一言..."
+            placeholder={selectedFiles.length > 1 ? "このアルバムについて一言..." : "この写真について一言..."}
             disabled={uploading}
           />
         </div>
 
         {/* バブリーアップロードボタン */}
-        <button ref={buttonRef} onClick={handleUpload} disabled={!selectedFile || uploading} className="bubbly-button">
+        <button ref={buttonRef} onClick={handleUpload} disabled={selectedFiles.length === 0 || uploading} className="bubbly-button">
           {uploading ? (
             <div className="flex items-center justify-center space-x-2">
               <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
               <span>アップロード中...</span>
             </div>
           ) : (
-            "写真をアップロード"
+            `${
+              selectedFiles.length === 0
+                ? "写真を選択してください"
+                : selectedFiles.length === 1
+                ? "写真をアップロード"
+                : `${selectedFiles.length}枚をアップロード`
+            }`
           )}
         </button>
       </div>
