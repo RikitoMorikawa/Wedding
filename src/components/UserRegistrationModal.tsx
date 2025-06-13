@@ -1,70 +1,84 @@
-'use client'
+"use client";
 
-import { useState } from 'react'
+import { useState } from "react";
 
 interface UserRegistrationModalProps {
-  passcode: string
-  onRegister: (name: string) => void
-  onLogout: () => void
+  passcode: string;
+  onRegister: (name: string) => void;
+  onLogout: () => void;
 }
 
-export default function UserRegistrationModal({ 
-  passcode, 
-  onRegister, 
-  onLogout 
-}: UserRegistrationModalProps) {
-  const [name, setName] = useState('')
-  const [loading, setLoading] = useState(false)
+export default function UserRegistrationModal({ passcode, onRegister, onLogout }: UserRegistrationModalProps) {
+  const [name, setName] = useState("");
+  const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    
+    e.preventDefault();
+
     if (!name.trim()) {
-      alert('名前を入力してください')
-      return
+      alert("名前を入力してください");
+      return;
     }
 
-    setLoading(true)
+    setLoading(true);
     try {
-      await onRegister(name.trim())
+      await onRegister(name.trim());
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4 shadow-xl">
-        <div className="mb-6">
-          <h2 className="text-2xl font-bold text-gray-800 mb-2">ユーザー情報登録</h2>
-          <p className="text-gray-600">
-            パスコード「{passcode}」のユーザー情報が見つかりません。
-            <br />
-            お名前を登録してください。
-          </p>
+    <div className="fixed inset-0 bg-black/20 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-white/95 backdrop-blur-md rounded-2xl p-8 w-full max-w-md shadow-2xl border border-white/30">
+        <div className="mb-8">
+          <div className="text-center mb-4">
+            <div className="inline-block p-3 bg-gradient-to-br from-pink-400 to-purple-400 rounded-full mb-4">
+              <svg className="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+              </svg>
+            </div>
+            <h2 className="text-2xl font-bold bg-gradient-to-r from-pink-600 to-purple-600 bg-clip-text text-transparent mb-2">ユーザー情報登録</h2>
+          </div>
+          <div className="text-center bg-pink-50 rounded-xl p-4 border border-pink-100">
+            <p className="text-gray-700 text-sm">
+              招待コード「<span className="font-bold text-pink-600">{passcode}</span>」
+            </p>
+            <p className="text-gray-700 text-sm">でログインしました</p>
+            <p className="text-gray-600 text-sm mt-2">お名前を登録して</p>
+            <p className="text-gray-600 text-sm mt-2"> 写真共有を始めましょう!</p>
+          </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-6">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-sm font-semibold text-gray-700 mb-3">
               お名前 <span className="text-red-500">*</span>
             </label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="例：田中太郎"
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              required
-              autoFocus
-            />
+            <div className="relative">
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="例：田中太郎"
+                className="w-full px-4 py-4 text-lg border-2 border-gray-200 rounded-2xl focus:outline-none focus:border-pink-400 focus:ring-4 focus:ring-pink-100 transition-all duration-200 bg-gray-50/50"
+                required
+                autoFocus
+                disabled={loading}
+              />
+              <div className="absolute inset-y-0 right-0 flex items-center pr-4">
+                <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                </svg>
+              </div>
+            </div>
           </div>
 
-          <div className="flex gap-3 pt-4">
+          <div className="flex gap-3 pt-2">
             <button
               type="button"
               onClick={onLogout}
-              className="flex-1 py-2 px-4 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+              className="flex-1 py-4 px-6 border-2 border-gray-300 rounded-2xl text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-all duration-200 font-medium"
               disabled={loading}
             >
               ログアウト
@@ -72,17 +86,36 @@ export default function UserRegistrationModal({
             <button
               type="submit"
               disabled={loading || !name.trim()}
-              className={`flex-1 py-2 px-4 rounded-md font-medium text-white ${
+              className={`flex-1 py-4 px-6 rounded-2xl font-bold transition-all duration-200 ${
                 loading || !name.trim()
-                  ? 'bg-gray-400 cursor-not-allowed'
-                  : 'bg-blue-500 hover:bg-blue-600'
+                  ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+                  : "bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 text-white shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
               }`}
             >
-              {loading ? '登録中...' : '登録'}
+              {loading ? (
+                <div className="flex items-center justify-center gap-2">
+                  <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path
+                      className="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                    ></path>
+                  </svg>
+                  登録中...
+                </div>
+              ) : (
+                <div className="flex items-center justify-center gap-2">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  登録
+                </div>
+              )}
             </button>
           </div>
         </form>
       </div>
     </div>
-  )
+  );
 }
