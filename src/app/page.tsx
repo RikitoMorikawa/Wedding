@@ -29,6 +29,7 @@ export default function Home() {
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [userInfoLoading, setUserInfoLoading] = useState(false);
+  const [showUploadModal, setShowUploadModal] = useState(false);
 
   const checkUser = async () => {
     console.log("=== Starting checkUser ===");
@@ -141,6 +142,11 @@ export default function Home() {
     }
   };
 
+  const handleUploadSuccess = () => {
+    setShowUploadModal(false);
+    window.location.reload();
+  };
+
   // ログ出力：現在の状態
   console.log("=== Current State ===");
   console.log("loading:", loading);
@@ -152,8 +158,13 @@ export default function Home() {
   if (loading) {
     console.log("3. Display: Initial loading screen");
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-xl">読み込み中...</div>
+      <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-rose-50 to-purple-50">
+        <div className="text-center">
+          <div className="inline-block p-4 bg-white rounded-full shadow-lg mb-4">
+            <div className="w-12 h-12 bg-gradient-to-br from-pink-400 to-purple-400 rounded-full animate-pulse"></div>
+          </div>
+          <div className="text-xl text-gray-700">読み込み中...</div>
+        </div>
       </div>
     );
   }
@@ -168,8 +179,13 @@ export default function Home() {
   if (userInfoLoading) {
     console.log("3. Display: User info loading screen");
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-xl">ユーザー情報を確認中...</div>
+      <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-rose-50 to-purple-50">
+        <div className="text-center">
+          <div className="inline-block p-4 bg-white rounded-full shadow-lg mb-4">
+            <div className="w-12 h-12 bg-gradient-to-br from-pink-400 to-purple-400 rounded-full animate-pulse"></div>
+          </div>
+          <div className="text-xl text-gray-700">ユーザー情報を確認中...</div>
+        </div>
       </div>
     );
   }
@@ -179,23 +195,30 @@ export default function Home() {
     console.log("3. Display: Modal for registration");
     return (
       <>
-        <main className="container mx-auto px-4 py-8">
-          <div className="flex justify-between items-center mb-8">
-            <h1 className="text-3xl font-bold text-center">結婚式写真共有</h1>
-            <div className="flex items-center gap-4">
-              <span className="text-sm text-gray-600">登録が必要です</span>
+        {/* バックグラウンドのメイン画面 */}
+        <div className="min-h-screen bg-gradient-to-br from-rose-50 to-purple-50">
+          {/* ヘッダー */}
+          <header className="bg-white/80 backdrop-blur-md border-b border-pink-100 sticky top-0 z-10">
+            <div className="px-4 py-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 bg-gradient-to-br from-pink-400 to-purple-400 rounded-full flex items-center justify-center">
+                    <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                    </svg>
+                  </div>
+                  <h1 className="text-xl font-bold bg-gradient-to-r from-pink-600 to-purple-600 bg-clip-text text-transparent">Wedding Memories</h1>
+                </div>
+                <div className="text-xs text-gray-500">登録が必要です</div>
+              </div>
             </div>
-          </div>
+          </header>
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            <div className="lg:col-span-1">
-              <PhotoUpload onUploadSuccess={() => window.location.reload()} />
-            </div>
-            <div className="lg:col-span-2">
-              <PhotoGallery />
-            </div>
-          </div>
-        </main>
+          {/* メインコンテンツ */}
+          <main className="pb-20">
+            <PhotoGallery />
+          </main>
+        </div>
 
         <UserRegistrationModal passcode={user.username} onRegister={handleUserRegistration} onLogout={handleSignOut} />
       </>
@@ -205,25 +228,71 @@ export default function Home() {
   // 5. 正常にユーザー情報が取得できた場合
   console.log("3. Display: Main app with user name:", userInfo.name);
   return (
-    <main className="container mx-auto px-4 py-8">
-      <div className="flex justify-between items-center mb-8">
-        <h1 className="text-3xl font-bold text-center">結婚式写真共有</h1>
-        <div className="flex items-center gap-4">
-          <span className="text-sm text-gray-600">ようこそ「{userInfo.name}」さん</span>
-          <button onClick={handleSignOut} className="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded">
-            ログアウト
-          </button>
-        </div>
-      </div>
+    <div className="min-h-screen bg-gradient-to-br from-rose-50 to-purple-50">
+      {/* ヘッダー */}
+      <header className="bg-white/80 backdrop-blur-md border-b border-pink-100 sticky top-0 z-40">
+        <div className="px-4 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 bg-gradient-to-br from-pink-400 to-purple-400 rounded-full flex items-center justify-center">
+                <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                </svg>
+              </div>
+              <div>
+                <h1 className="text-xl font-bold bg-gradient-to-r from-pink-600 to-purple-600 bg-clip-text text-transparent">Wedding Memories</h1>
+                <p className="text-xs text-gray-600">ようこそ {userInfo.name}さん</p>
+              </div>
+            </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-1">
-          <PhotoUpload onUploadSuccess={() => window.location.reload()} />
+            <button onClick={handleSignOut} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
+              <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"
+                />
+              </svg>
+            </button>
+          </div>
         </div>
-        <div className="lg:col-span-2">
-          <PhotoGallery />
+      </header>
+
+      {/* メインコンテンツ */}
+      <main className="pb-20">
+        <PhotoGallery />
+      </main>
+
+      {/* 固定投稿ボタン */}
+      <button
+        onClick={() => setShowUploadModal(true)}
+        className="fixed bottom-6 right-6 z-30 w-14 h-14 bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 text-white rounded-full shadow-lg hover:shadow-xl transition-all duration-200 transform hover:scale-105"
+      >
+        <svg className="w-6 h-6 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+        </svg>
+      </button>
+
+      {/* アップロードモーダル */}
+      {showUploadModal && (
+        <div className="fixed inset-0 bg-black/20 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white/95 backdrop-blur-md rounded-2xl w-full max-w-md shadow-2xl border border-white/30">
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-xl font-bold bg-gradient-to-r from-pink-600 to-purple-600 bg-clip-text text-transparent">写真をアップロード</h2>
+                <button onClick={() => setShowUploadModal(false)} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
+                  <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              <PhotoUpload onUploadSuccess={handleUploadSuccess} />
+            </div>
+          </div>
         </div>
-      </div>
-    </main>
+      )}
+    </div>
   );
 }
