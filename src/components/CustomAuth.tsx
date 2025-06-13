@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { signIn } from 'aws-amplify/auth'
+import { signIn, SignInOutput } from 'aws-amplify/auth'
 
 interface CustomAuthProps {
   onAuthSuccess: () => void
@@ -27,7 +27,7 @@ export default function CustomAuth({ onAuthSuccess }: CustomAuthProps) {
       console.log('=== CustomAuth: Starting login ===')
       console.log('Attempting to sign in with passcode:', passcode)
       
-      const result = await signIn({
+      const result: SignInOutput = await signIn({
         username: passcode,
         password: passcode
       })
@@ -41,12 +41,13 @@ export default function CustomAuth({ onAuthSuccess }: CustomAuthProps) {
         console.log('❌ CustomAuth: Login incomplete:', result.nextStep)
         setError('ログインが完了しませんでした')
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('CustomAuth: Login error:', error)
       
-      if (error.name === 'NotAuthorizedException') {
+      const err = error as { name?: string }
+      if (err.name === 'NotAuthorizedException') {
         setError('パスコードが正しくありません')
-      } else if (error.name === 'UserNotFoundException') {
+      } else if (err.name === 'UserNotFoundException') {
         setError('ユーザーが見つかりません')
       } else {
         setError('ログインエラーが発生しました')
