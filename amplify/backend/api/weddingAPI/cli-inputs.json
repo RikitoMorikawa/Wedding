@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "paths": {
+    "/photos": {
+      "name": "/photos",
+      "lambdaFunction": "weddingPhotosFunction",
+      "permissions": {
+        "setting": "open"
+      }
+    }
+  }
+}

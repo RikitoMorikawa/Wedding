@@ -1,0 +1,40 @@
+{
+  "dev": {
+    "awscloudformation": {
+      "AuthRoleName": "amplify-wedding-dev-e48b3-authRole",
+      "UnauthRoleArn": "arn:aws:iam::992382521689:role/amplify-wedding-dev-e48b3-unauthRole",
+      "AuthRoleArn": "arn:aws:iam::992382521689:role/amplify-wedding-dev-e48b3-authRole",
+      "Region": "ap-northeast-1",
+      "DeploymentBucketName": "amplify-wedding-dev-e48b3-deployment",
+      "UnauthRoleName": "amplify-wedding-dev-e48b3-unauthRole",
+      "StackName": "amplify-wedding-dev-e48b3",
+      "StackId": "arn:aws:cloudformation:ap-northeast-1:992382521689:stack/amplify-wedding-dev-e48b3/5330cf70-481b-11f0-a080-061c8101f4b7",
+      "AmplifyAppId": "d17lbvp1d125uc",
+      "APIGatewayAuthURL": "https://s3.amazonaws.com/amplify-wedding-dev-e48b3-deployment/amplify-cfn-templates/api/APIGatewayAuthStack.json"
+    },
+    "categories": {
+      "auth": {
+        "weddingAuth": {}
+      },
+      "function": {
+        "weddingPhotosFunction": {
+          "deploymentBucketName": "amplify-wedding-dev-e48b3-deployment",
+          "s3Key": "amplify-builds/weddingPhotosFunction-50776771494469383562-build.zip"
+        }
+      },
+      "storage": {
+        "weddingPhotos": {},
+        "weddingUsers": {}
+      },
+      "api": {
+        "weddingAPI": {}
+      },
+      "hosting": {
+        "amplifyhosting": {
+          "appId": "d17lbvp1d125uc",
+          "type": "manual"
+        }
+      }
+    }
+  }
+}

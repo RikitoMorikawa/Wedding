@@ -1,0 +1,10 @@
+{
+  "resourceName": "weddingUsers",
+  "tableName": "Users",
+  "partitionKey": {
+    "fieldName": "passcode",
+    "fieldType": "string"
+  },
+  "gsi": [],
+  "triggerFunctions": []
+}

@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "storage": {
+      "weddingPhotos": [
+        "create",
+        "read",
+        "update",
+        "delete"
+      ],
+      "weddingUsers": [
+        "create",
+        "read",
+        "update",
+        "delete"
+      ]
+    }
+  },
+  "lambdaLayers": []
+}
