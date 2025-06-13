@@ -31,6 +31,18 @@
     "storageweddingUsersStreamArn": {
       "Type": "String",
       "Default": "storageweddingUsersStreamArn"
+    },
+    "storagePhotosName": {
+      "Type": "String",
+      "Default": "storagePhotosName"
+    },
+    "storagePhotosArn": {
+      "Type": "String",
+      "Default": "storagePhotosArn"
+    },
+    "storagePhotosStreamArn": {
+      "Type": "String",
+      "Default": "storagePhotosStreamArn"
     }
   },
   "Conditions": {
@@ -97,6 +109,15 @@
             },
             "STORAGE_WEDDINGUSERS_STREAMARN": {
               "Ref": "storageweddingUsersStreamArn"
+            },
+            "STORAGE_PHOTOS_NAME": {
+              "Ref": "storagePhotosName"
+            },
+            "STORAGE_PHOTOS_ARN": {
+              "Ref": "storagePhotosArn"
+            },
+            "STORAGE_PHOTOS_STREAMARN": {
+              "Ref": "storagePhotosStreamArn"
             }
           }
         },
@@ -277,6 +298,43 @@
                     [
                       {
                         "Ref": "storageweddingUsersArn"
+                      },
+                      "index/*"
+                    ]
+                  ]
+                }
+              ]
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "dynamodb:Put*",
+                "dynamodb:Create*",
+                "dynamodb:BatchWriteItem",
+                "dynamodb:PartiQLInsert",
+                "dynamodb:Get*",
+                "dynamodb:BatchGetItem",
+                "dynamodb:List*",
+                "dynamodb:Describe*",
+                "dynamodb:Scan",
+                "dynamodb:Query",
+                "dynamodb:PartiQLSelect",
+                "dynamodb:Update*",
+                "dynamodb:RestoreTable*",
+                "dynamodb:PartiQLUpdate",
+                "dynamodb:Delete*",
+                "dynamodb:PartiQLDelete"
+              ],
+              "Resource": [
+                {
+                  "Ref": "storagePhotosArn"
+                },
+                {
+                  "Fn::Join": [
+                    "/",
+                    [
+                      {
+                        "Ref": "storagePhotosArn"
                       },
                       "index/*"
                     ]

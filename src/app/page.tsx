@@ -30,6 +30,7 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [userInfoLoading, setUserInfoLoading] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
+  const [refreshTrigger, setRefreshTrigger] = useState(0); // 写真一覧の更新用
 
   const checkUser = async () => {
     console.log("=== Starting checkUser ===");
@@ -144,7 +145,8 @@ export default function Home() {
 
   const handleUploadSuccess = () => {
     setShowUploadModal(false);
-    window.location.reload();
+    // 写真一覧を更新するためにrefreshTriggerを変更
+    setRefreshTrigger((prev) => prev + 1);
   };
 
   // ログ出力：現在の状態
@@ -216,7 +218,7 @@ export default function Home() {
 
           {/* メインコンテンツ */}
           <main className="pb-20">
-            <PhotoGallery />
+            <PhotoGallery refreshTrigger={refreshTrigger} />
           </main>
         </div>
 
@@ -261,7 +263,7 @@ export default function Home() {
 
       {/* メインコンテンツ */}
       <main className="pb-20">
-        <PhotoGallery />
+        <PhotoGallery refreshTrigger={refreshTrigger} />
       </main>
 
       {/* 固定投稿ボタン */}
@@ -288,7 +290,7 @@ export default function Home() {
                 </button>
               </div>
 
-              <PhotoUpload onUploadSuccess={handleUploadSuccess} />
+              <PhotoUpload onUploadSuccess={handleUploadSuccess} userInfo={userInfo} />
             </div>
           </div>
         </div>

@@ -1,0 +1,14 @@
+{
+  "resourceName": "Photos",
+  "tableName": "Photos",
+  "partitionKey": {
+    "fieldName": "photoId",
+    "fieldType": "string"
+  },
+  "sortKey": {
+    "fieldName": "uploadedAt",
+    "fieldType": "string"
+  },
+  "gsi": [],
+  "triggerFunctions": []
+}

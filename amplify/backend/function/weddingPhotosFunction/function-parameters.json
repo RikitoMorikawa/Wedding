@@ -12,6 +12,12 @@
         "read",
         "update",
         "delete"
+      ],
+      "Photos": [
+        "create",
+        "read",
+        "update",
+        "delete"
       ]
     }
   },

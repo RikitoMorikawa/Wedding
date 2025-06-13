@@ -27,6 +27,16 @@ export type AmplifyDependentResourcesAttributes = {
     }
   },
   "storage": {
+    "Photos": {
+      "Arn": "string",
+      "Name": "string",
+      "PartitionKeyName": "string",
+      "PartitionKeyType": "string",
+      "Region": "string",
+      "SortKeyName": "string",
+      "SortKeyType": "string",
+      "StreamArn": "string"
+    },
     "weddingPhotos": {
       "BucketName": "string",
       "Region": "string"
