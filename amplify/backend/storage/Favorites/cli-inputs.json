@@ -7,9 +7,9 @@
   },
   "gsi": [
     {
-      "name": "photoId-index",
+      "name": "albumId-index",
       "partitionKey": {
-        "fieldName": "favoriteId",
+        "fieldName": "albumId",
         "fieldType": "string"
       },
       "sortKey": {

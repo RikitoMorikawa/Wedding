@@ -82,40 +82,6 @@
       "type": "manual"
     }
   },
-  "parameters": {
-    "AMPLIFY_function_weddingPhotosFunction_deploymentBucketName": {
-      "usedBy": [
-        {
-          "category": "function",
-          "resourceName": "weddingPhotosFunction"
-        }
-      ]
-    },
-    "AMPLIFY_function_weddingPhotosFunction_s3Key": {
-      "usedBy": [
-        {
-          "category": "function",
-          "resourceName": "weddingPhotosFunction"
-        }
-      ]
-    },
-    "AMPLIFY_hosting_amplifyhosting_appId": {
-      "usedBy": [
-        {
-          "category": "hosting",
-          "resourceName": "amplifyhosting"
-        }
-      ]
-    },
-    "AMPLIFY_hosting_amplifyhosting_type": {
-      "usedBy": [
-        {
-          "category": "hosting",
-          "resourceName": "amplifyhosting"
-        }
-      ]
-    }
-  },
   "storage": {
     "Favorites": {
       "providerPlugin": "awscloudformation",

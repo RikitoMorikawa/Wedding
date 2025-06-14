@@ -8,12 +8,15 @@
 	STORAGE_WEDDINGUSERS_ARN
 	STORAGE_WEDDINGUSERS_NAME
 	STORAGE_WEDDINGUSERS_STREAMARN
+	STORAGE_FAVORITES_ARN
+	STORAGE_FAVORITES_NAME
+	STORAGE_FAVORITES_STREAMARN
 Amplify Params - DO NOT EDIT */
 const express = require("express");
 const bodyParser = require("body-parser");
 const awsServerlessExpressMiddleware = require("aws-serverless-express/middleware");
 const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
-const { DynamoDBDocumentClient, GetCommand, PutCommand, ScanCommand } = require("@aws-sdk/lib-dynamodb");
+const { DynamoDBDocumentClient, GetCommand, PutCommand, ScanCommand, DeleteCommand, QueryCommand } = require("@aws-sdk/lib-dynamodb");
 
 // DynamoDB setup
 const client = new DynamoDBClient({ region: process.env.AWS_REGION });
@@ -280,6 +283,255 @@ app.get("/photos/albums", async function (req, res) {
   }
 });
 
+// アルバムにお気に入り追加
+app.post("/albums/:albumId/favorite", async function (req, res) {
+  try {
+    const { albumId } = req.params;
+    const userId = req.headers["user-id"];
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: "User ID is required",
+      });
+    }
+
+    const favoriteId = `${albumId}-${userId}`;
+
+    // 既にお気に入りに追加されているかチェック
+    const checkCommand = new GetCommand({
+      TableName: process.env.STORAGE_FAVORITES_NAME,
+      Key: { favoriteId },
+    });
+
+    const existingFavorite = await docClient.send(checkCommand);
+
+    if (existingFavorite.Item) {
+      return res.status(409).json({
+        success: false,
+        error: "Already favorited",
+      });
+    }
+
+    // お気に入りを追加
+    const putCommand = new PutCommand({
+      TableName: process.env.STORAGE_FAVORITES_NAME,
+      Item: {
+        favoriteId,
+        albumId,
+        userId,
+        createdAt: new Date().toISOString(),
+      },
+    });
+
+    await docClient.send(putCommand);
+
+    res.json({
+      success: true,
+      message: "Added to favorites",
+    });
+  } catch (error) {
+    console.error("Error adding favorite:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// アルバムのお気に入り削除
+app.delete("/albums/:albumId/favorite", async function (req, res) {
+  try {
+    const { albumId } = req.params;
+    const userId = req.headers["user-id"];
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: "User ID is required",
+      });
+    }
+
+    const favoriteId = `${albumId}-${userId}`;
+
+    // お気に入りを削除
+    const deleteCommand = new DeleteCommand({
+      TableName: process.env.STORAGE_FAVORITES_NAME,
+      Key: { favoriteId },
+    });
+
+    await docClient.send(deleteCommand);
+
+    res.json({
+      success: true,
+      message: "Removed from favorites",
+    });
+  } catch (error) {
+    console.error("Error removing favorite:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// アルバムのお気に入り数取得
+app.get("/albums/:albumId/favorites/count", async function (req, res) {
+  try {
+    const { albumId } = req.params;
+
+    const command = new QueryCommand({
+      TableName: process.env.STORAGE_FAVORITES_NAME,
+      IndexName: "albumId-index",
+      KeyConditionExpression: "albumId = :albumId",
+      ExpressionAttributeValues: {
+        ":albumId": albumId,
+      },
+    });
+
+    const result = await docClient.send(command);
+    const favoriteCount = result.Items ? result.Items.length : 0;
+
+    res.json({
+      success: true,
+      albumId,
+      favoriteCount,
+    });
+  } catch (error) {
+    console.error("Error getting favorite count:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// ユーザーのお気に入りアルバム一覧を取得
+app.get("/favorites", async function (req, res) {
+  try {
+    const userId = req.headers["user-id"];
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: "User ID is required",
+      });
+    }
+
+    const command = new ScanCommand({
+      TableName: process.env.STORAGE_FAVORITES_NAME,
+      FilterExpression: "userId = :userId",
+      ExpressionAttributeValues: {
+        ":userId": userId,
+      },
+    });
+
+    const result = await docClient.send(command);
+    const favorites = result.Items || [];
+
+    res.json({
+      success: true,
+      favorites: favorites.map((fav) => fav.albumId),
+    });
+  } catch (error) {
+    console.error("Error getting user favorites:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// アルバム一覧にお気に入り数を含めて取得（既存APIの拡張）
+app.get("/photos/albums-with-favorites", async function (req, res) {
+  try {
+    console.log("Getting albums with favorite counts");
+    console.log("Photos table name:", process.env.STORAGE_PHOTOS_NAME);
+    console.log("Favorites table name:", process.env.STORAGE_FAVORITES_NAME);
+
+    // 既存のアルバム取得ロジック
+    const photosCommand = new ScanCommand({
+      TableName: process.env.STORAGE_PHOTOS_NAME,
+    });
+
+    const photosResult = await docClient.send(photosCommand);
+    const photos = photosResult.Items || [];
+
+    // アルバムごとにグループ化
+    const albumsMap = new Map();
+
+    photos.forEach((photo) => {
+      const albumId = photo.albumId || photo.photoId;
+
+      if (!albumsMap.has(albumId)) {
+        albumsMap.set(albumId, {
+          albumId: albumId,
+          photos: [],
+          mainPhoto: null,
+          uploadedBy: photo.uploadedBy,
+          uploaderName: photo.uploaderName,
+          uploadedAt: photo.uploadedAt,
+          caption: "",
+          totalPhotos: 1,
+        });
+      }
+
+      const album = albumsMap.get(albumId);
+      album.photos.push(photo);
+
+      if (photo.isMainPhoto || photo.photoIndex === 0 || (!album.mainPhoto && album.photos.length === 1)) {
+        album.mainPhoto = photo;
+        album.caption = photo.caption || "";
+        album.uploadedAt = photo.uploadedAt;
+      }
+
+      if (photo.uploadedAt > album.uploadedAt) {
+        album.uploadedAt = photo.uploadedAt;
+      }
+
+      album.totalPhotos = album.photos.length;
+    });
+
+    // お気に入り数を取得
+    const favoritesCommand = new ScanCommand({
+      TableName: process.env.STORAGE_FAVORITES_NAME,
+    });
+
+    const favoritesResult = await docClient.send(favoritesCommand);
+    const favorites = favoritesResult.Items || [];
+
+    // アルバムごとのお気に入り数をカウント
+    const favoriteCounts = {};
+    favorites.forEach((favorite) => {
+      favoriteCounts[favorite.albumId] = (favoriteCounts[favorite.albumId] || 0) + 1;
+    });
+
+    // アルバム配列に変換してお気に入り数を追加
+    const albums = Array.from(albumsMap.values())
+      .map((album) => ({
+        ...album,
+        favoriteCount: favoriteCounts[album.albumId] || 0,
+      }))
+      .sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime());
+
+    // 各アルバム内の写真をphotoIndexでソート
+    albums.forEach((album) => {
+      album.photos.sort((a, b) => (a.photoIndex || 0) - (b.photoIndex || 0));
+    });
+
+    res.json({
+      success: true,
+      albums: albums,
+    });
+  } catch (error) {
+    console.error("Error getting albums with favorites:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
 // Get all photos (legacy API for backward compatibility)
 app.get("/photos/list", async function (req, res) {
   try {
@@ -328,6 +580,11 @@ app.get("/photos", function (req, res) {
       "POST /photos/save": "Save single photo (legacy)",
       "POST /photos/save-album": "Save album photo",
       "GET /photos/albums": "Get photos grouped by albums",
+      "GET /photos/albums-with-favorites": "Get albums with favorite counts",
+      "POST /albums/:albumId/favorite": "Add album to favorites",
+      "DELETE /albums/:albumId/favorite": "Remove album from favorites",
+      "GET /albums/:albumId/favorites/count": "Get album favorite count",
+      "GET /favorites": "Get user's favorite albums",
       "GET /photos/list": "Get photos list (legacy)",
     },
   });
