@@ -26,11 +26,18 @@ const app = express();
 app.use(bodyParser.json());
 app.use(awsServerlessExpressMiddleware.eventContext());
 
-// Enable CORS for all methods
+// Enhanced CORS for all methods
 app.use(function (req, res, next) {
   res.header("Access-Control-Allow-Origin", "*");
-  res.header("Access-Control-Allow-Headers", "*");
-  res.header("Access-Control-Allow-Methods", "*");
+  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, user-id");
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
+
+  // Handle preflight requests
+  if (req.method === "OPTIONS") {
+    res.status(200).send();
+    return;
+  }
+
   next();
 });
 
@@ -133,8 +140,7 @@ app.post("/photos/save", async function (req, res) {
         caption: caption || "",
         s3Key: s3Key,
         uploaderName: uploaderName || "",
-        // レガシー形式のため、単一写真として扱う
-        albumId: photoId, // 単一写真の場合はphotoIdをalbumIdとして使用
+        albumId: photoId,
         photoIndex: 0,
         totalPhotos: 1,
         isMainPhoto: true,
@@ -229,7 +235,7 @@ app.get("/photos/albums", async function (req, res) {
     const albumsMap = new Map();
 
     photos.forEach((photo) => {
-      const albumId = photo.albumId || photo.photoId; // 既存の単一写真は photoId をアルバムIDとして使用
+      const albumId = photo.albumId || photo.photoId;
 
       if (!albumsMap.has(albumId)) {
         albumsMap.set(albumId, {
@@ -247,14 +253,12 @@ app.get("/photos/albums", async function (req, res) {
       const album = albumsMap.get(albumId);
       album.photos.push(photo);
 
-      // メイン写真を設定（isMainPhoto が true、または最初の写真）
       if (photo.isMainPhoto || photo.photoIndex === 0 || (!album.mainPhoto && album.photos.length === 1)) {
         album.mainPhoto = photo;
         album.caption = photo.caption || "";
         album.uploadedAt = photo.uploadedAt;
       }
 
-      // 最新のアップロード時間を保持
       if (photo.uploadedAt > album.uploadedAt) {
         album.uploadedAt = photo.uploadedAt;
       }
@@ -262,10 +266,8 @@ app.get("/photos/albums", async function (req, res) {
       album.totalPhotos = album.photos.length;
     });
 
-    // アルバム配列に変換してソート
     const albums = Array.from(albumsMap.values()).sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime());
 
-    // 各アルバム内の写真をphotoIndexでソート
     albums.forEach((album) => {
       album.photos.sort((a, b) => (a.photoIndex || 0) - (b.photoIndex || 0));
     });
@@ -288,6 +290,8 @@ app.post("/albums/:albumId/favorite", async function (req, res) {
   try {
     const { albumId } = req.params;
     const userId = req.headers["user-id"];
+
+    console.log("Adding favorite:", { albumId, userId });
 
     if (!userId) {
       return res.status(400).json({
@@ -345,6 +349,8 @@ app.delete("/albums/:albumId/favorite", async function (req, res) {
     const { albumId } = req.params;
     const userId = req.headers["user-id"];
 
+    console.log("Removing favorite:", { albumId, userId });
+
     if (!userId) {
       return res.status(400).json({
         success: false,
@@ -375,13 +381,13 @@ app.delete("/albums/:albumId/favorite", async function (req, res) {
   }
 });
 
-// アルバムのお気に入り数取得
-// アルバムのお気に入り数取得（GSIなし版）
+// アルバムのお気に入り数取得（GSIなし版 - Scanを使用）
 app.get("/albums/:albumId/favorites/count", async function (req, res) {
   try {
     const { albumId } = req.params;
 
-    // GSIの代わりにScanを使用（効率は落ちるが動作する）
+    console.log("Getting favorite count for album:", albumId);
+
     const command = new ScanCommand({
       TableName: process.env.STORAGE_FAVORITES_NAME,
       FilterExpression: "albumId = :albumId",
@@ -411,6 +417,8 @@ app.get("/albums/:albumId/favorites/count", async function (req, res) {
 app.get("/favorites", async function (req, res) {
   try {
     const userId = req.headers["user-id"];
+
+    console.log("Getting favorites for user:", userId);
 
     if (!userId) {
       return res.status(400).json({
@@ -545,9 +553,8 @@ app.get("/photos/list", async function (req, res) {
 
     const result = await docClient.send(command);
 
-    // レガシー形式（単一写真として扱う）のため、メイン写真のみを返す
     const photos = (result.Items || [])
-      .filter((photo) => photo.isMainPhoto !== false) // メイン写真またはisMainPhotoが設定されていない写真
+      .filter((photo) => photo.isMainPhoto !== false)
       .map((photo) => ({
         photoId: photo.photoId,
         uploadedBy: photo.uploadedBy,

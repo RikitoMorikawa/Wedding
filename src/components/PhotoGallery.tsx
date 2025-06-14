@@ -29,29 +29,82 @@ interface Album {
   caption: string;
   totalPhotos: number;
   mainPhotoUrl?: string;
+  favoriteCount?: number; // お気に入り数を追加
 }
 
 interface PhotoGalleryProps {
   refreshTrigger: number;
+  userInfo: { passcode: string; name: string } | null;
 }
 
-export default function PhotoGallery({ refreshTrigger }: PhotoGalleryProps) {
+export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryProps) {
   const [albums, setAlbums] = useState<Album[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedAlbum, setSelectedAlbum] = useState<Album | null>(null);
   const [currentPhotoIndex, setCurrentPhotoIndex] = useState(0);
+  const [userFavorites, setUserFavorites] = useState<Set<string>>(new Set());
+  const [favoriteLoading, setFavoriteLoading] = useState<string | null>(null);
 
-  // アルバム一覧を取得
+  // ユーザーのお気に入り一覧を取得
+  const fetchUserFavorites = async () => {
+    try {
+      if (!userInfo) return;
+
+      console.log("Fetching user favorites for:", userInfo.passcode);
+
+      const response = await fetch(`${awsconfig.aws_cloud_logic_custom[0].endpoint}/favorites`, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          "user-id": userInfo.passcode,
+        },
+      });
+
+      console.log("Favorites response status:", response.status);
+
+      if (!response.ok) {
+        console.error("Favorites request failed:", response.status, response.statusText);
+        return; // エラーでも処理を続行
+      }
+
+      const result = await response.json();
+      console.log("Favorites result:", result);
+
+      if (result.success) {
+        setUserFavorites(new Set(result.favorites));
+      }
+    } catch (error) {
+      console.error("Error fetching user favorites:", error);
+      // エラーでも処理を続行（お気に入り機能なしで動作）
+    }
+  };
+
+  // アルバム一覧を取得（お気に入り数付き）
   const fetchAlbums = async () => {
     try {
       setLoading(true);
 
-      // DynamoDBからアルバムデータを取得
-      const response = await fetch(`${awsconfig.aws_cloud_logic_custom[0].endpoint}/photos/albums`);
-      const result = await response.json();
+      console.log("Fetching albums with favorites...");
 
+      // まずお気に入り数付きのAPIを試す
+      let response = await fetch(`${awsconfig.aws_cloud_logic_custom[0].endpoint}/photos/albums-with-favorites`);
+      let result = await response.json();
+
+      // お気に入り数付きAPIが失敗した場合、通常のAPIにフォールバック
       if (!result.success) {
-        throw new Error(result.message || "Failed to fetch albums");
+        console.log("Falling back to regular albums API");
+        response = await fetch(`${awsconfig.aws_cloud_logic_custom[0].endpoint}/photos/albums`);
+        result = await response.json();
+
+        if (!result.success) {
+          throw new Error(result.message || "Failed to fetch albums");
+        }
+
+        // お気に入り数を0で初期化
+        result.albums = result.albums.map((album: Album) => ({
+          ...album,
+          favoriteCount: 0,
+        }));
       }
 
       console.log("Albums result:", result.albums);
@@ -82,6 +135,80 @@ export default function PhotoGallery({ refreshTrigger }: PhotoGalleryProps) {
       console.error("Error fetching albums:", error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // お気に入りの切り替え
+  const toggleFavorite = async (albumId: string) => {
+    try {
+      if (!userInfo) return;
+
+      console.log("Toggling favorite for album:", albumId, "user:", userInfo.passcode);
+
+      setFavoriteLoading(albumId);
+      const isFavorited = userFavorites.has(albumId);
+
+      const response = await fetch(`${awsconfig.aws_cloud_logic_custom[0].endpoint}/albums/${albumId}/favorite`, {
+        method: isFavorited ? "DELETE" : "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "user-id": userInfo.passcode,
+        },
+      });
+
+      console.log("Toggle favorite response:", response.status);
+
+      if (!response.ok) {
+        console.error("Failed to toggle favorite:", response.status, response.statusText);
+        return;
+      }
+
+      const result = await response.json();
+      console.log("Toggle favorite result:", result);
+
+      if (result.success) {
+        // ローカル状態を更新
+        setUserFavorites((prev) => {
+          const newSet = new Set(prev);
+          if (isFavorited) {
+            newSet.delete(albumId);
+          } else {
+            newSet.add(albumId);
+          }
+          return newSet;
+        });
+
+        // アルバム一覧のお気に入り数を更新
+        setAlbums((prev) =>
+          prev.map((album) => {
+            if (album.albumId === albumId) {
+              return {
+                ...album,
+                favoriteCount: (album.favoriteCount || 0) + (isFavorited ? -1 : 1),
+              };
+            }
+            return album;
+          })
+        );
+
+        // 選択中のアルバムも更新
+        if (selectedAlbum && selectedAlbum.albumId === albumId) {
+          setSelectedAlbum((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  favoriteCount: (prev.favoriteCount || 0) + (isFavorited ? -1 : 1),
+                }
+              : null
+          );
+        }
+      } else {
+        console.error("Failed to toggle favorite:", result.error);
+      }
+    } catch (error) {
+      console.error("Error toggling favorite:", error);
+    } finally {
+      setFavoriteLoading(null);
     }
   };
 
@@ -136,7 +263,8 @@ export default function PhotoGallery({ refreshTrigger }: PhotoGalleryProps) {
 
   useEffect(() => {
     fetchAlbums();
-  }, [refreshTrigger]);
+    fetchUserFavorites();
+  }, [refreshTrigger, userInfo]);
 
   if (loading) {
     return (
@@ -193,6 +321,18 @@ export default function PhotoGallery({ refreshTrigger }: PhotoGalleryProps) {
                     />
                   </svg>
                   <span className="text-white text-xs font-medium">{album.totalPhotos}</span>
+                </div>
+              </div>
+            )}
+
+            {/* お気に入り数表示 */}
+            {(album.favoriteCount || 0) > 0 && (
+              <div className="absolute top-2 left-2">
+                <div className="bg-red-500/90 backdrop-blur-sm rounded-lg px-2 py-1 flex items-center space-x-1">
+                  <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+                  </svg>
+                  <span className="text-white text-xs font-medium">{album.favoriteCount}</span>
                 </div>
               </div>
             )}
@@ -274,6 +414,44 @@ export default function PhotoGallery({ refreshTrigger }: PhotoGalleryProps) {
                   </svg>
                 </button>
               )}
+
+              {/* お気に入りボタン */}
+              <div className="absolute bottom-20 right-4">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleFavorite(selectedAlbum.albumId);
+                  }}
+                  disabled={favoriteLoading === selectedAlbum.albumId}
+                  className={`w-12 h-12 rounded-full flex items-center justify-center transition-all ${
+                    userFavorites.has(selectedAlbum.albumId) ? "bg-red-500 scale-110" : "bg-white/20 backdrop-blur-sm hover:bg-white/30"
+                  } ${favoriteLoading === selectedAlbum.albumId ? "opacity-50" : ""}`}
+                >
+                  {favoriteLoading === selectedAlbum.albumId ? (
+                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                  ) : (
+                    <svg
+                      className="w-6 h-6 text-white"
+                      fill={userFavorites.has(selectedAlbum.albumId) ? "currentColor" : "none"}
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"
+                      />
+                    </svg>
+                  )}
+                </button>
+                {/* お気に入り数表示 */}
+                {(selectedAlbum.favoriteCount || 0) > 0 && (
+                  <div className="absolute -top-2 -right-2 bg-red-500 text-white text-xs rounded-full w-6 h-6 flex items-center justify-center">
+                    {selectedAlbum.favoriteCount}
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* サムネイル表示（複数枚の場合） */}

@@ -218,7 +218,7 @@ export default function Home() {
 
           {/* メインコンテンツ */}
           <main className="pb-20">
-            <PhotoGallery refreshTrigger={refreshTrigger} />
+            <PhotoGallery refreshTrigger={refreshTrigger} userInfo={userInfo} />
           </main>
         </div>
 
@@ -263,7 +263,7 @@ export default function Home() {
 
       {/* メインコンテンツ */}
       <main className="pb-20">
-        <PhotoGallery refreshTrigger={refreshTrigger} />
+        <PhotoGallery refreshTrigger={refreshTrigger} userInfo={userInfo} />
       </main>
 
       {/* 固定投稿ボタン */}

@@ -7,6 +7,20 @@
       "permissions": {
         "setting": "open"
       }
+    },
+    "/favorites": {
+      "name": "/favorites",
+      "lambdaFunction": "weddingPhotosFunction",
+      "permissions": {
+        "setting": "open"
+      }
+    },
+    "/albums": {
+      "name": "/albums",
+      "lambdaFunction": "weddingPhotosFunction",
+      "permissions": {
+        "setting": "open"
+      }
     }
   }
 }
