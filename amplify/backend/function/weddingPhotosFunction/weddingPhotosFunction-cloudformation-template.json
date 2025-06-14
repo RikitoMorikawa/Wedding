@@ -43,6 +43,18 @@
     "storagePhotosStreamArn": {
       "Type": "String",
       "Default": "storagePhotosStreamArn"
+    },
+    "storageFavoritesName": {
+      "Type": "String",
+      "Default": "storageFavoritesName"
+    },
+    "storageFavoritesArn": {
+      "Type": "String",
+      "Default": "storageFavoritesArn"
+    },
+    "storageFavoritesStreamArn": {
+      "Type": "String",
+      "Default": "storageFavoritesStreamArn"
     }
   },
   "Conditions": {
@@ -118,6 +130,15 @@
             },
             "STORAGE_PHOTOS_STREAMARN": {
               "Ref": "storagePhotosStreamArn"
+            },
+            "STORAGE_FAVORITES_NAME": {
+              "Ref": "storageFavoritesName"
+            },
+            "STORAGE_FAVORITES_ARN": {
+              "Ref": "storageFavoritesArn"
+            },
+            "STORAGE_FAVORITES_STREAMARN": {
+              "Ref": "storageFavoritesStreamArn"
             }
           }
         },
@@ -335,6 +356,43 @@
                     [
                       {
                         "Ref": "storagePhotosArn"
+                      },
+                      "index/*"
+                    ]
+                  ]
+                }
+              ]
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "dynamodb:Put*",
+                "dynamodb:Create*",
+                "dynamodb:BatchWriteItem",
+                "dynamodb:PartiQLInsert",
+                "dynamodb:Get*",
+                "dynamodb:BatchGetItem",
+                "dynamodb:List*",
+                "dynamodb:Describe*",
+                "dynamodb:Scan",
+                "dynamodb:Query",
+                "dynamodb:PartiQLSelect",
+                "dynamodb:Update*",
+                "dynamodb:RestoreTable*",
+                "dynamodb:PartiQLUpdate",
+                "dynamodb:Delete*",
+                "dynamodb:PartiQLDelete"
+              ],
+              "Resource": [
+                {
+                  "Ref": "storageFavoritesArn"
+                },
+                {
+                  "Fn::Join": [
+                    "/",
+                    [
+                      {
+                        "Ref": "storageFavoritesArn"
                       },
                       "index/*"
                     ]

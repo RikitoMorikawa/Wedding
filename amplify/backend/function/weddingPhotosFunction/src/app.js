@@ -1,6 +1,9 @@
 /* Amplify Params - DO NOT EDIT
 	ENV
 	REGION
+	STORAGE_FAVORITES_ARN
+	STORAGE_FAVORITES_NAME
+	STORAGE_FAVORITES_STREAMARN
 	STORAGE_PHOTOS_ARN
 	STORAGE_PHOTOS_NAME
 	STORAGE_PHOTOS_STREAMARN
@@ -8,9 +11,6 @@
 	STORAGE_WEDDINGUSERS_ARN
 	STORAGE_WEDDINGUSERS_NAME
 	STORAGE_WEDDINGUSERS_STREAMARN
-	STORAGE_FAVORITES_ARN
-	STORAGE_FAVORITES_NAME
-	STORAGE_FAVORITES_STREAMARN
 Amplify Params - DO NOT EDIT */
 const express = require("express");
 const bodyParser = require("body-parser");
@@ -376,14 +376,15 @@ app.delete("/albums/:albumId/favorite", async function (req, res) {
 });
 
 // アルバムのお気に入り数取得
+// アルバムのお気に入り数取得（GSIなし版）
 app.get("/albums/:albumId/favorites/count", async function (req, res) {
   try {
     const { albumId } = req.params;
 
-    const command = new QueryCommand({
+    // GSIの代わりにScanを使用（効率は落ちるが動作する）
+    const command = new ScanCommand({
       TableName: process.env.STORAGE_FAVORITES_NAME,
-      IndexName: "albumId-index",
-      KeyConditionExpression: "albumId = :albumId",
+      FilterExpression: "albumId = :albumId",
       ExpressionAttributeValues: {
         ":albumId": albumId,
       },

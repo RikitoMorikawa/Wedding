@@ -18,6 +18,12 @@
         "read",
         "update",
         "delete"
+      ],
+      "Favorites": [
+        "create",
+        "read",
+        "update",
+        "delete"
       ]
     }
   },

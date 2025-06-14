@@ -5,18 +5,6 @@
     "fieldName": "favoriteId",
     "fieldType": "string"
   },
-  "gsi": [
-    {
-      "name": "albumId-index",
-      "partitionKey": {
-        "fieldName": "albumId",
-        "fieldType": "string"
-      },
-      "sortKey": {
-        "fieldName": "userId",
-        "fieldType": "string"
-      }
-    }
-  ],
+  "gsi": [],
   "triggerFunctions": []
 }

@@ -69,6 +69,15 @@
           ],
           "category": "storage",
           "resourceName": "Photos"
+        },
+        {
+          "attributes": [
+            "Name",
+            "Arn",
+            "StreamArn"
+          ],
+          "category": "storage",
+          "resourceName": "Favorites"
         }
       ],
       "providerPlugin": "awscloudformation",
