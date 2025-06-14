@@ -27,7 +27,6 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
   const [uploading, setUploading] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<SelectedFile[]>([]);
   const [caption, setCaption] = useState("");
-  const [uploadProgress, setUploadProgress] = useState<{ [key: string]: number }>({});
   const buttonRef = useRef<HTMLButtonElement>(null);
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -95,9 +94,6 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
         const fileKey = `photos/${albumId}/${photoId}-${selectedFile.file.name}`;
 
         try {
-          // 進捗更新
-          setUploadProgress((prev) => ({ ...prev, [selectedFile.id]: 0 }));
-
           // S3にファイルをアップロード
           await uploadData({
             key: fileKey,
@@ -112,9 +108,6 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
               },
             },
           }).result;
-
-          // 進捗更新
-          setUploadProgress((prev) => ({ ...prev, [selectedFile.id]: 50 }));
 
           // DynamoDBに写真メタデータを保存
           const response = await fetch(`${awsconfig.aws_cloud_logic_custom[0].endpoint}/photos/save-album`, {
@@ -142,13 +135,9 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
             throw new Error(saveResult.message || "Failed to save photo metadata");
           }
 
-          // 進捗完了
-          setUploadProgress((prev) => ({ ...prev, [selectedFile.id]: 100 }));
-
           return { success: true, photoId, fileKey };
         } catch (error) {
           console.error(`Error uploading ${selectedFile.file.name}:`, error);
-          setUploadProgress((prev) => ({ ...prev, [selectedFile.id]: -1 })); // エラー状態
           return { success: false, error, photoId, fileKey };
         }
       });
@@ -163,7 +152,6 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
       selectedFiles.forEach((file) => URL.revokeObjectURL(file.preview));
       setSelectedFiles([]);
       setCaption("");
-      setUploadProgress({});
       const fileInput = document.getElementById("file-input") as HTMLInputElement;
       if (fileInput) fileInput.value = "";
 
@@ -336,52 +324,11 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
         {/* 選択されたファイルの情報（プレビューなし） */}
         {selectedFiles.length > 0 && (
           <div className="bg-pink-50/50 rounded-2xl p-4">
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-gray-700">選択中の写真 ({selectedFiles.length}枚)</h3>
               <button onClick={removeAllFiles} className="text-xs text-red-500 hover:text-red-700 font-medium" disabled={uploading}>
                 すべて削除
               </button>
-            </div>
-
-            <div className="space-y-2 max-h-32 overflow-y-auto">
-              {selectedFiles.map((selectedFile, index) => (
-                <div key={selectedFile.id} className="flex items-center justify-between bg-white rounded-lg p-2">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-8 h-8 bg-pink-100 rounded-lg flex items-center justify-center">
-                      {index === 0 ? <span className="text-pink-600 text-xs font-bold">★</span> : <span className="text-pink-600 text-xs">{index + 1}</span>}
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-gray-800 truncate max-w-48">{selectedFile.file.name}</p>
-                      <p className="text-xs text-gray-500">
-                        {(selectedFile.file.size / (1024 * 1024)).toFixed(1)}MB
-                        {index === 0 && <span className="ml-2 text-pink-600">（メイン写真）</span>}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* アップロード進捗 */}
-                  {uploading && uploadProgress[selectedFile.id] !== undefined && (
-                    <div className="flex items-center space-x-2">
-                      {uploadProgress[selectedFile.id] === -1 ? (
-                        <span className="text-red-500 text-xs">エラー</span>
-                      ) : uploadProgress[selectedFile.id] === 100 ? (
-                        <svg className="w-4 h-4 text-green-500" fill="currentColor" viewBox="0 0 20 20">
-                          <path
-                            fillRule="evenodd"
-                            d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                            clipRule="evenodd"
-                          />
-                        </svg>
-                      ) : (
-                        <div className="flex items-center space-x-1">
-                          <div className="w-3 h-3 border border-pink-300 border-t-pink-600 rounded-full animate-spin"></div>
-                          <span className="text-xs text-gray-600">{uploadProgress[selectedFile.id]}%</span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ))}
             </div>
           </div>
         )}

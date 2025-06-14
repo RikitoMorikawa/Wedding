@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { Amplify } from "aws-amplify";
 import { getCurrentUser, signOut, AuthUser } from "aws-amplify/auth";
-import { get, post } from "aws-amplify/api";
+import { get } from "aws-amplify/api";
 import awsconfig from "../aws-exports";
 import CustomAuth from "@/components/CustomAuth";
 import PhotoGallery from "@/components/PhotoGallery";
@@ -89,73 +89,27 @@ export default function Home() {
       setUserInfo(null);
     } finally {
       setUserInfoLoading(false);
-      console.log("2. DynamoDB check completed");
+      console.log("2. DynamoDB name column check - Completed");
     }
   };
 
-  const handleUserRegistration = async (name: string) => {
-    if (!user) return;
-
-    try {
-      const restOperation = post({
-        apiName: "weddingAPI",
-        path: "/photos/user",
-        options: {
-          body: {
-            passcode: user.username,
-            name: name,
-          },
-        },
-      });
-
-      const response = await restOperation.response;
-      const rawData = await response.body.json();
-      const data = rawData as unknown as { success: boolean };
-
-      if (data.success) {
-        setUserInfo({
-          passcode: user.username,
-          name: name,
-        });
-        alert("ユーザー情報を登録しました！");
-      } else {
-        alert("登録に失敗しました");
-      }
-    } catch (error) {
-      console.error("Error registering user:", error);
-      alert("登録に失敗しました");
-    }
-  };
-
-  const handleAuthSuccess = async () => {
-    console.log("=== Auth success callback ===");
-    // CustomAuthからのコールバック後、再度checkUserを実行
-    await checkUser();
-  };
-
-  const handleSignOut = async () => {
+  const handleLogout = async () => {
     try {
       await signOut();
       setUser(null);
       setUserInfo(null);
+      window.location.reload();
     } catch (error) {
-      console.error("Sign out error:", error);
+      console.error("Error signing out: ", error);
     }
   };
 
   const handleUploadSuccess = () => {
     setShowUploadModal(false);
-    // 写真一覧を更新するためにrefreshTriggerを変更
     setRefreshTrigger((prev) => prev + 1);
   };
 
-  // ログ出力：現在の状態
-  console.log("=== Current State ===");
-  console.log("loading:", loading);
-  console.log("userInfoLoading:", userInfoLoading);
-  console.log("user:", user ? "exists" : "null");
-  console.log("userInfo:", userInfo);
-
+  // 読み込み中
   // 1. 初期ローディング中
   if (loading) {
     console.log("3. Display: Initial loading screen");
@@ -171,83 +125,55 @@ export default function Home() {
     );
   }
 
-  // 2. 未認証の場合
+  // 未認証（ログイン画面）
   if (!user) {
-    console.log("3. Display: Login screen");
-    return <CustomAuth onAuthSuccess={handleAuthSuccess} />;
+    return <CustomAuth onAuthSuccess={checkUser} />;
   }
 
-  // 3. ユーザー情報取得中
+  // ユーザー情報取得中
   if (userInfoLoading) {
-    console.log("3. Display: User info loading screen");
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-rose-50 to-purple-50">
+      <div className="min-h-screen bg-gradient-to-br from-pink-50 via-white to-purple-50 flex items-center justify-center">
         <div className="text-center">
-          <div className="inline-block p-4 bg-white rounded-full shadow-lg mb-4">
-            <div className="w-12 h-12 bg-gradient-to-br from-pink-400 to-purple-400 rounded-full animate-pulse"></div>
-          </div>
-          <div className="text-xl text-gray-700">ユーザー情報を確認中...</div>
+          <div className="w-16 h-16 border-4 border-pink-300 border-t-pink-600 rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-600 font-medium">ユーザー情報を確認中...</p>
         </div>
       </div>
     );
   }
 
-  // 4. 認証済みだがユーザー情報未登録の場合（モーダル表示）
-  if (!userInfo || !userInfo.name) {
-    console.log("3. Display: Modal for registration");
+  // 名前未登録（ユーザー登録モーダル）
+  if (!userInfo?.name) {
     return (
-      <>
-        {/* バックグラウンドのメイン画面 */}
-        <div className="min-h-screen bg-gradient-to-br from-rose-50 to-purple-50">
-          {/* ヘッダー */}
-          <header className="bg-white/80 backdrop-blur-md border-b border-pink-100 sticky top-0 z-10">
-            <div className="px-4 py-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 bg-gradient-to-br from-pink-400 to-purple-400 rounded-full flex items-center justify-center">
-                    <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-                    </svg>
-                  </div>
-                  <h1 className="text-xl font-bold bg-gradient-to-r from-pink-600 to-purple-600 bg-clip-text text-transparent">Wedding Memories</h1>
-                </div>
-                <div className="text-xs text-gray-500">登録が必要です</div>
-              </div>
-            </div>
-          </header>
-
-          {/* メインコンテンツ */}
-          <main className="pb-20">
-            <PhotoGallery refreshTrigger={refreshTrigger} />
-          </main>
-        </div>
-
-        <UserRegistrationModal passcode={user.username} onRegister={handleUserRegistration} onLogout={handleSignOut} />
-      </>
+      <div className="min-h-screen bg-gradient-to-br from-pink-50 via-white to-purple-50">
+        <UserRegistrationModal
+          passcode={user.username}
+          onRegister={(name: string) => {
+            setUserInfo({
+              passcode: user.username,
+              name: name,
+            });
+          }}
+          onLogout={handleLogout}
+        />
+      </div>
     );
   }
 
-  // 5. 正常にユーザー情報が取得できた場合
-  console.log("3. Display: Main app with user name:", userInfo.name);
+  // メイン画面
   return (
-    <div className="min-h-screen bg-gradient-to-br from-rose-50 to-purple-50">
+    <div className="min-h-screen bg-gradient-to-br from-pink-50 via-white to-purple-50">
       {/* ヘッダー */}
-      <header className="bg-white/80 backdrop-blur-md border-b border-pink-100 sticky top-0 z-40">
-        <div className="px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 bg-gradient-to-br from-pink-400 to-purple-400 rounded-full flex items-center justify-center">
-                <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-                </svg>
-              </div>
-              <div>
-                <h1 className="text-xl font-bold bg-gradient-to-r from-pink-600 to-purple-600 bg-clip-text text-transparent">Wedding Memories</h1>
-                <p className="text-xs text-gray-600">ようこそ {userInfo.name}さん</p>
-              </div>
-            </div>
-
-            <button onClick={handleSignOut} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
+      <header className="bg-white/80 backdrop-blur-md shadow-sm border-b border-pink-100 sticky top-0 z-20">
+        <div className="flex items-center justify-between p-4">
+          <div>
+            <h1 className="text-xl font-bold bg-gradient-to-r from-pink-600 to-purple-600 bg-clip-text text-transparent">Wedding Photos</h1>
+            <p className="text-sm text-gray-600">
+              こんにちは、<span className="font-medium text-pink-600">{userInfo.name}</span>さん
+            </p>
+          </div>
+          <div className="flex items-center space-x-3">
+            <button onClick={handleLogout} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
               <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
                   strokeLinecap="round"
@@ -263,7 +189,7 @@ export default function Home() {
 
       {/* メインコンテンツ */}
       <main className="pb-20">
-        <PhotoGallery refreshTrigger={refreshTrigger} />
+        <PhotoGallery refreshTrigger={refreshTrigger} userInfo={userInfo} />
       </main>
 
       {/* 固定投稿ボタン */}

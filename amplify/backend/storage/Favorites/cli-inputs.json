@@ -5,6 +5,29 @@
     "fieldName": "favoriteId",
     "fieldType": "string"
   },
-  "gsi": [],
+  "gsi": [
+    {
+      "name": "userId-index",
+      "partitionKey": {
+        "fieldName": "userId",
+        "fieldType": "string"
+      },
+      "sortKey": {
+        "fieldName": "createdAt",
+        "fieldType": "string"
+      }
+    },
+    {
+      "name": "targetType-targetId-index",
+      "partitionKey": {
+        "fieldName": "targetType",
+        "fieldType": "string"
+      },
+      "sortKey": {
+        "fieldName": "targetId",
+        "fieldType": "string"
+      }
+    }
+  ],
   "triggerFunctions": []
 }

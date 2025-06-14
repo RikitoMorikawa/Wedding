@@ -1,24 +1,10 @@
-/* Amplify Params - DO NOT EDIT
-	ENV
-	REGION
-	STORAGE_PHOTOS_ARN
-	STORAGE_PHOTOS_NAME
-	STORAGE_PHOTOS_STREAMARN
-	STORAGE_WEDDINGPHOTOS_BUCKETNAME
-	STORAGE_WEDDINGUSERS_ARN
-	STORAGE_WEDDINGUSERS_NAME
-	STORAGE_WEDDINGUSERS_STREAMARN
-Amplify Params - DO NOT EDIT */
 const express = require("express");
 const bodyParser = require("body-parser");
 const awsServerlessExpressMiddleware = require("aws-serverless-express/middleware");
 const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
-const { DynamoDBDocumentClient, GetCommand, PutCommand, ScanCommand } = require("@aws-sdk/lib-dynamodb");
+const { DynamoDBDocumentClient, GetCommand, PutCommand, ScanCommand, DeleteCommand, QueryCommand } = require("@aws-sdk/lib-dynamodb");
 
-// DynamoDB setup
-const client = new DynamoDBClient({ region: process.env.AWS_REGION });
-const docClient = DynamoDBDocumentClient.from(client);
-
+// declare a new express app
 const app = express();
 app.use(bodyParser.json());
 app.use(awsServerlessExpressMiddleware.eventContext());
@@ -27,17 +13,21 @@ app.use(awsServerlessExpressMiddleware.eventContext());
 app.use(function (req, res, next) {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Headers", "*");
-  res.header("Access-Control-Allow-Methods", "*");
   next();
 });
 
-// Get user info by passcode
+// DynamoDB setup
+const client = new DynamoDBClient({ region: process.env.AWS_REGION });
+const docClient = DynamoDBDocumentClient.from(client);
+
+/**********************
+ * 既存のAPIエンドポイント *
+ **********************/
+
+// ユーザー情報取得
 app.get("/photos/user/:passcode", async function (req, res) {
   try {
     const { passcode } = req.params;
-
-    console.log("Looking up user:", passcode);
-    console.log("Table name:", process.env.STORAGE_WEDDINGUSERS_NAME);
 
     const command = new GetCommand({
       TableName: process.env.STORAGE_WEDDINGUSERS_NAME,
@@ -54,13 +44,13 @@ app.get("/photos/user/:passcode", async function (req, res) {
         user: result.Item,
       });
     } else {
-      res.json({
+      res.status(404).json({
         success: false,
         message: "User not found",
       });
     }
   } catch (error) {
-    console.error("Error:", error);
+    console.error("Error getting user:", error);
     res.status(500).json({
       success: false,
       error: error.message,
@@ -68,7 +58,7 @@ app.get("/photos/user/:passcode", async function (req, res) {
   }
 });
 
-// Register new user
+// ユーザー登録
 app.post("/photos/user", async function (req, res) {
   try {
     const { passcode, name } = req.body;
@@ -76,18 +66,16 @@ app.post("/photos/user", async function (req, res) {
     if (!passcode || !name) {
       return res.status(400).json({
         success: false,
-        message: "passcode and name are required",
+        message: "Passcode and name are required",
       });
     }
-
-    console.log("Registering user:", { passcode, name });
-    console.log("Table name:", process.env.STORAGE_WEDDINGUSERS_NAME);
 
     const command = new PutCommand({
       TableName: process.env.STORAGE_WEDDINGUSERS_NAME,
       Item: {
         passcode: passcode,
         name: name,
+        createdAt: new Date().toISOString(),
       },
     });
 
@@ -106,113 +94,9 @@ app.post("/photos/user", async function (req, res) {
   }
 });
 
-// Save photo metadata to DynamoDB (legacy single photo)
-app.post("/photos/save", async function (req, res) {
-  try {
-    const { photoId, uploadedBy, caption, s3Key, uploaderName } = req.body;
-
-    if (!photoId || !uploadedBy || !s3Key) {
-      return res.status(400).json({
-        success: false,
-        message: "photoId, uploadedBy, and s3Key are required",
-      });
-    }
-
-    console.log("Saving photo metadata:", { photoId, uploadedBy, caption, s3Key, uploaderName });
-    console.log("Photos table name:", process.env.STORAGE_PHOTOS_NAME);
-
-    const command = new PutCommand({
-      TableName: process.env.STORAGE_PHOTOS_NAME,
-      Item: {
-        photoId: photoId,
-        uploadedAt: new Date().toISOString(),
-        uploadedBy: uploadedBy,
-        caption: caption || "",
-        s3Key: s3Key,
-        uploaderName: uploaderName || "",
-        // レガシー形式のため、単一写真として扱う
-        albumId: photoId, // 単一写真の場合はphotoIdをalbumIdとして使用
-        photoIndex: 0,
-        totalPhotos: 1,
-        isMainPhoto: true,
-      },
-    });
-
-    await docClient.send(command);
-
-    res.json({
-      success: true,
-      message: "Photo metadata saved successfully",
-    });
-  } catch (error) {
-    console.error("Error saving photo metadata:", error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-    });
-  }
-});
-
-// Save album photos to DynamoDB
-app.post("/photos/save-album", async function (req, res) {
-  try {
-    const { photoId, albumId, uploadedBy, caption, s3Key, uploaderName, uploadedAt, photoIndex, totalPhotos, isMainPhoto } = req.body;
-
-    if (!photoId || !albumId || !uploadedBy || !s3Key) {
-      return res.status(400).json({
-        success: false,
-        message: "photoId, albumId, uploadedBy, and s3Key are required",
-      });
-    }
-
-    console.log("Saving album photo metadata:", {
-      photoId,
-      albumId,
-      uploadedBy,
-      caption,
-      s3Key,
-      uploaderName,
-      photoIndex,
-      totalPhotos,
-      isMainPhoto,
-    });
-    console.log("Photos table name:", process.env.STORAGE_PHOTOS_NAME);
-
-    const command = new PutCommand({
-      TableName: process.env.STORAGE_PHOTOS_NAME,
-      Item: {
-        photoId: photoId,
-        uploadedAt: uploadedAt,
-        albumId: albumId,
-        uploadedBy: uploadedBy,
-        caption: caption || "",
-        s3Key: s3Key,
-        uploaderName: uploaderName || "",
-        photoIndex: photoIndex || 0,
-        totalPhotos: totalPhotos || 1,
-        isMainPhoto: isMainPhoto || false,
-      },
-    });
-
-    await docClient.send(command);
-
-    res.json({
-      success: true,
-      message: "Album photo metadata saved successfully",
-    });
-  } catch (error) {
-    console.error("Error saving album photo metadata:", error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-    });
-  }
-});
-
-// Get all photos grouped by albums
+// アルバム一覧取得
 app.get("/photos/albums", async function (req, res) {
   try {
-    console.log("Getting photos grouped by albums");
     console.log("Photos table name:", process.env.STORAGE_PHOTOS_NAME);
 
     const command = new ScanCommand({
@@ -278,6 +162,253 @@ app.get("/photos/albums", async function (req, res) {
       error: error.message,
     });
   }
+});
+
+/**********************
+ * お気に入り機能API *
+ **********************/
+
+// お気に入り追加/削除
+app.post("/favorites", async function (req, res) {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "*");
+
+  try {
+    const { userId, targetType, targetId, action } = req.body;
+
+    if (!userId || !targetType || !targetId || !action) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing required fields: userId, targetType, targetId, action",
+      });
+    }
+
+    const favoriteId = `${userId}_${targetType}_${targetId}`;
+
+    if (action === "add") {
+      // お気に入り追加
+      const putCommand = new PutCommand({
+        TableName: process.env.STORAGE_FAVORITES_NAME,
+        Item: {
+          favoriteId: favoriteId,
+          userId: userId,
+          targetType: targetType, // "album" または "photo"
+          targetId: targetId,
+          createdAt: new Date().toISOString(),
+        },
+        ConditionExpression: "attribute_not_exists(favoriteId)", // 重複防止
+      });
+
+      try {
+        await docClient.send(putCommand);
+        res.json({
+          success: true,
+          message: "お気に入りに追加しました",
+          favoriteId: favoriteId,
+        });
+      } catch (error) {
+        if (error.name === "ConditionalCheckFailedException") {
+          res.status(409).json({
+            success: false,
+            message: "すでにお気に入りに登録されています",
+          });
+        } else {
+          throw error;
+        }
+      }
+    } else if (action === "remove") {
+      // お気に入り削除
+      const deleteCommand = new DeleteCommand({
+        TableName: process.env.STORAGE_FAVORITES_NAME,
+        Key: {
+          favoriteId: favoriteId,
+        },
+      });
+
+      await docClient.send(deleteCommand);
+      res.json({
+        success: true,
+        message: "お気に入りから削除しました",
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        message: "action must be 'add' or 'remove'",
+      });
+    }
+  } catch (error) {
+    console.error("Error handling favorite:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// ユーザーのお気に入り一覧取得
+app.get("/favorites/user/:userId", async function (req, res) {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "*");
+
+  try {
+    const { userId } = req.params;
+
+    // Favoritesテーブルから該当ユーザーのお気に入りを取得
+    // GSIを使用しない場合はScanを使用
+    const scanCommand = new ScanCommand({
+      TableName: process.env.STORAGE_FAVORITES_NAME,
+      FilterExpression: "userId = :userId",
+      ExpressionAttributeValues: {
+        ":userId": userId,
+      },
+    });
+
+    const result = await docClient.send(scanCommand);
+    const favorites = result.Items || [];
+
+    res.json({
+      success: true,
+      favorites: favorites,
+    });
+  } catch (error) {
+    console.error("Error getting user favorites:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// 特定の対象のお気に入り数を取得
+app.get("/favorites/count/:targetType/:targetId", async function (req, res) {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "*");
+
+  try {
+    const { targetType, targetId } = req.params;
+
+    const scanCommand = new ScanCommand({
+      TableName: process.env.STORAGE_FAVORITES_NAME,
+      FilterExpression: "targetType = :targetType AND targetId = :targetId",
+      ExpressionAttributeValues: {
+        ":targetType": targetType,
+        ":targetId": targetId,
+      },
+    });
+
+    const result = await docClient.send(scanCommand);
+    const count = result.Items ? result.Items.length : 0;
+
+    res.json({
+      success: true,
+      count: count,
+    });
+  } catch (error) {
+    console.error("Error getting favorite count:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// 特定ユーザーの特定対象へのお気に入り状態をチェック
+app.get("/favorites/check/:userId/:targetType/:targetId", async function (req, res) {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "*");
+
+  try {
+    const { userId, targetType, targetId } = req.params;
+    const favoriteId = `${userId}_${targetType}_${targetId}`;
+
+    const getCommand = new GetCommand({
+      TableName: process.env.STORAGE_FAVORITES_NAME,
+      Key: {
+        favoriteId: favoriteId,
+      },
+    });
+
+    const result = await docClient.send(getCommand);
+    const isFavorite = !!result.Item;
+
+    res.json({
+      success: true,
+      isFavorite: isFavorite,
+    });
+  } catch (error) {
+    console.error("Error checking favorite status:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// 写真アルバム保存エンドポイント
+app.post("/photos/save-album", async function (req, res) {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "*");
+
+  try {
+    const {
+      photoId,
+      albumId,
+      uploadedBy,
+      caption,
+      s3Key,
+      uploaderName,
+      uploadedAt,
+      photoIndex,
+      totalPhotos,
+      isMainPhoto
+    } = req.body;
+
+    if (!photoId || !uploadedBy || !s3Key) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing required fields: photoId, uploadedBy, s3Key"
+      });
+    }
+
+    const putCommand = new PutCommand({
+      TableName: process.env.STORAGE_PHOTOS_NAME,
+      Item: {
+        photoId: photoId,
+        albumId: albumId || photoId, // albumIdがない場合はphotoIdを使用
+        uploadedBy: uploadedBy,
+        uploaderName: uploaderName,
+        caption: caption || "",
+        s3Key: s3Key,
+        uploadedAt: uploadedAt,
+        photoIndex: photoIndex || 0,
+        totalPhotos: totalPhotos || 1,
+        isMainPhoto: isMainPhoto || false
+      }
+    });
+
+    await docClient.send(putCommand);
+
+    res.json({
+      success: true,
+      message: "Photo saved successfully",
+      photoId: photoId
+    });
+
+  } catch (error) {
+    console.error("Error saving photo:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// OPTIONSリクエストの処理
+app.options("/*", function (req, res) {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "*");
+  res.header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
+  res.send();
 });
 
 app.listen(3000, function () {
