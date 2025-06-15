@@ -1,12 +1,14 @@
-// PhotoUpload.tsx - シンプル版（ダイアログ内蔵）
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef } from "react";
 import { Amplify } from "aws-amplify";
 import { uploadData } from "aws-amplify/storage";
 import { getCurrentUser } from "aws-amplify/auth";
 import { v4 as uuidv4 } from "uuid";
 import awsconfig from "../aws-exports";
+import WeddingConfirmDialog from "./WeddingConfirmDialog";
+import UploadResultDialog from "./UploadResultDialog";
+import BubblyButton from "./BubblyButton";
 
 // Amplifyの設定
 Amplify.configure(awsconfig);
@@ -29,30 +31,15 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
   const [selectedFiles, setSelectedFiles] = useState<SelectedFile[]>([]);
   const [caption, setCaption] = useState("");
 
-  // シンプルなダイアログ状態
-  const [showDialog, setShowDialog] = useState(false);
-  const [dialogMessage, setDialogMessage] = useState("");
-  const [isSuccess, setIsSuccess] = useState(true);
-  const [shouldCloseModal, setShouldCloseModal] = useState(false);
+  // 結果ダイアログの状態
+  const [showResultDialog, setShowResultDialog] = useState(false);
+  const [resultMessage, setResultMessage] = useState("");
+  const [isResultSuccess, setIsResultSuccess] = useState(true);
+
+  // 結婚式確認ダイアログの状態
+  const [showWeddingConfirm, setShowWeddingConfirm] = useState(false);
 
   const buttonRef = useRef<HTMLButtonElement>(null);
-
-  // 3秒後に自動でダイアログを閉じる
-  useEffect(() => {
-    if (showDialog) {
-      const timer = setTimeout(() => {
-        setShowDialog(false);
-        // ダイアログが閉じた後にモーダルも閉じる
-        if (shouldCloseModal) {
-          setTimeout(() => {
-            onUploadSuccess();
-            setShouldCloseModal(false);
-          }, 300);
-        }
-      }, 3000);
-      return () => clearTimeout(timer);
-    }
-  }, [showDialog, shouldCloseModal, onUploadSuccess]);
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || []);
@@ -101,22 +88,47 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
   };
 
   const showSuccessDialog = (message: string) => {
-    setDialogMessage(message);
-    setIsSuccess(true);
-    setShowDialog(true);
-    setShouldCloseModal(true);
+    setResultMessage(message);
+    setIsResultSuccess(true);
+    setShowResultDialog(true);
   };
 
   const showErrorDialog = (message: string) => {
-    setDialogMessage(message);
-    setIsSuccess(false);
-    setShowDialog(true);
-    setShouldCloseModal(true);
+    setResultMessage(message);
+    setIsResultSuccess(false);
+    setShowResultDialog(true);
   };
 
-  const handleUpload = async (e: React.MouseEvent<HTMLButtonElement>) => {
-    e.preventDefault();
+  // 結果ダイアログを閉じた時の処理
+  const handleResultDialogClose = () => {
+    setShowResultDialog(false);
+    // 成功時は少し待ってからモーダルを閉じる
+    if (isResultSuccess) {
+      setTimeout(() => {
+        onUploadSuccess();
+      }, 300);
+    }
+  };
 
+  // アップロードボタンクリック時（確認ダイアログを表示）
+  const handleUploadClick = () => {
+    if (selectedFiles.length === 0) return;
+    setShowWeddingConfirm(true);
+  };
+
+  // 結婚式確認ダイアログで「はい」を選択
+  const handleWeddingConfirm = () => {
+    setShowWeddingConfirm(false);
+    performUpload();
+  };
+
+  // 結婚式確認ダイアログで「いいえ」を選択
+  const handleWeddingCancel = () => {
+    setShowWeddingConfirm(false);
+  };
+
+  // 実際のアップロード処理
+  const performUpload = async () => {
     if (selectedFiles.length === 0 || !userInfo) return;
 
     animateButton();
@@ -184,13 +196,14 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
 
       console.log(`Upload completed: ${successCount} success, ${failureCount} failures`);
 
+      // ファイルをクリーンアップ
       selectedFiles.forEach((file) => URL.revokeObjectURL(file.preview));
       setSelectedFiles([]);
       setCaption("");
       const fileInput = document.getElementById("file-input") as HTMLInputElement;
       if (fileInput) fileInput.value = "";
 
-      // シンプルなダイアログ表示（onUploadSuccessは自動で後から実行）
+      // 結果ダイアログ表示
       if (failureCount === 0) {
         showSuccessDialog(`🎉 アップロード完了！\n投稿ありがとうございます！ \nRikito & Yuria ❤️`);
       } else {
@@ -208,149 +221,6 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
 
   return (
     <>
-      {/* バブリーボタン用CSS */}
-      <style jsx>{`
-        .bubbly-button {
-          font-family: "Helvetica", "Arial", sans-serif;
-          display: inline-block;
-          font-size: 1em;
-          padding: 1em 2em;
-          -webkit-appearance: none;
-          appearance: none;
-          background-color: #ff0081;
-          color: #fff;
-          border-radius: 16px;
-          border: none;
-          cursor: pointer;
-          position: relative;
-          transition: transform ease-in 0.1s, box-shadow ease-in 0.25s;
-          box-shadow: 0 2px 25px rgba(255, 0, 130, 0.5);
-          width: 100%;
-          font-weight: bold;
-        }
-
-        .bubbly-button:focus {
-          outline: 0;
-        }
-
-        .bubbly-button:before,
-        .bubbly-button:after {
-          position: absolute;
-          content: "";
-          display: block;
-          width: 140%;
-          height: 100%;
-          left: -20%;
-          z-index: -1000;
-          transition: all ease-in-out 0.5s;
-          background-repeat: no-repeat;
-        }
-
-        .bubbly-button:before {
-          display: none;
-          top: -75%;
-          background-image: radial-gradient(circle, #ff0081 20%, transparent 20%), radial-gradient(circle, transparent 20%, #ff0081 20%, transparent 30%),
-            radial-gradient(circle, #ff0081 20%, transparent 20%), radial-gradient(circle, #ff0081 20%, transparent 20%),
-            radial-gradient(circle, transparent 10%, #ff0081 15%, transparent 20%), radial-gradient(circle, #ff0081 20%, transparent 20%),
-            radial-gradient(circle, #ff0081 20%, transparent 20%), radial-gradient(circle, #ff0081 20%, transparent 20%),
-            radial-gradient(circle, #ff0081 20%, transparent 20%);
-          background-size: 10% 10%, 20% 20%, 15% 15%, 20% 20%, 18% 18%, 10% 10%, 15% 15%, 10% 10%, 18% 18%;
-        }
-
-        .bubbly-button:after {
-          display: none;
-          bottom: -75%;
-          background-image: radial-gradient(circle, #ff0081 20%, transparent 20%), radial-gradient(circle, #ff0081 20%, transparent 20%),
-            radial-gradient(circle, transparent 10%, #ff0081 15%, transparent 20%), radial-gradient(circle, #ff0081 20%, transparent 20%),
-            radial-gradient(circle, #ff0081 20%, transparent 20%), radial-gradient(circle, #ff0081 20%, transparent 20%),
-            radial-gradient(circle, #ff0081 20%, transparent 20%);
-          background-size: 15% 15%, 20% 20%, 18% 18%, 20% 20%, 15% 15%, 10% 10%, 20% 20%;
-        }
-
-        .bubbly-button:active {
-          transform: scale(0.9);
-          background-color: #e6007a;
-          box-shadow: 0 2px 25px rgba(255, 0, 130, 0.2);
-        }
-
-        .bubbly-button:disabled {
-          background-color: #d1d5db;
-          color: #6b7280;
-          cursor: not-allowed;
-          box-shadow: none;
-          transform: none;
-        }
-
-        .bubbly-button:disabled:before,
-        .bubbly-button:disabled:after {
-          display: none;
-        }
-
-        .bubbly-button.animate:before {
-          display: block;
-          animation: topBubbles ease-in-out 0.75s forwards;
-        }
-
-        .bubbly-button.animate:after {
-          display: block;
-          animation: bottomBubbles ease-in-out 0.75s forwards;
-        }
-
-        @keyframes topBubbles {
-          0% {
-            background-position: 5% 90%, 10% 90%, 10% 90%, 15% 90%, 25% 90%, 25% 90%, 40% 90%, 55% 90%, 70% 90%;
-          }
-          50% {
-            background-position: 0% 80%, 0% 20%, 10% 40%, 20% 0%, 30% 30%, 22% 50%, 50% 50%, 65% 20%, 90% 30%;
-          }
-          100% {
-            background-position: 0% 70%, 0% 10%, 10% 30%, 20% -10%, 30% 20%, 22% 40%, 50% 40%, 65% 10%, 90% 20%;
-            background-size: 0% 0%, 0% 0%, 0% 0%, 0% 0%, 0% 0%, 0% 0%;
-          }
-        }
-
-        @keyframes bottomBubbles {
-          0% {
-            background-position: 10% -10%, 30% 10%, 55% -10%, 70% -10%, 85% -10%, 70% -10%, 70% 0%;
-          }
-          50% {
-            background-position: 0% 80%, 20% 80%, 45% 60%, 60% 100%, 75% 70%, 95% 60%, 105% 0%;
-          }
-          100% {
-            background-position: 0% 90%, 20% 90%, 45% 70%, 60% 110%, 75% 80%, 95% 70%, 110% 10%;
-            background-size: 0% 0%, 0% 0%, 0% 0%, 0% 0%, 0% 0%, 0% 0%;
-          }
-        }
-
-        .dialog-slide-in {
-          animation: slideIn 0.3s ease-out;
-        }
-
-        @keyframes slideIn {
-          from {
-            transform: translateY(-20px);
-            opacity: 0;
-          }
-          to {
-            transform: translateY(0);
-            opacity: 1;
-          }
-        }
-
-        .progress-bar {
-          animation: progress 3s linear forwards;
-        }
-
-        @keyframes progress {
-          from {
-            width: 100%;
-          }
-          to {
-            width: 0%;
-          }
-        }
-      `}</style>
-
       {/* モーダル内に完全に収まるレイアウト */}
       <div className="space-y-4">
         {/* ファイル選択エリア */}
@@ -431,7 +301,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
 
         {/* アップロードボタン - モーダル内の最下部 */}
         <div className="pt-3">
-          <button ref={buttonRef} onClick={handleUpload} disabled={selectedFiles.length === 0 || uploading} className="bubbly-button">
+          <BubblyButton ref={buttonRef} onClick={handleUploadClick} disabled={selectedFiles.length === 0 || uploading}>
             {uploading ? (
               <div className="flex items-center justify-center space-x-2">
                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
@@ -446,70 +316,21 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
                   : `${selectedFiles.length}枚をアップロード`
               }`
             )}
-          </button>
+          </BubblyButton>
         </div>
-
-        {/* シンプルなダイアログ（内蔵） */}
-        {showDialog && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[9999] p-4">
-            <div
-              className={`bg-white rounded-3xl p-6 max-w-sm w-full mx-auto shadow-2xl border border-gray-200 dialog-slide-in ${
-                isSuccess ? "border-green-200" : "border-yellow-200"
-              }`}
-              style={{ zIndex: 10000 }}
-            >
-              {/* アイコン */}
-              <div className="text-center mb-4">
-                <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${isSuccess ? "bg-green-100" : "bg-yellow-100"}`}>
-                  {isSuccess ? (
-                    <svg className="w-8 h-8 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
-                  ) : (
-                    <svg className="w-8 h-8 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01" />
-                    </svg>
-                  )}
-                </div>
-
-                {/* メッセージ */}
-                <div className={`text-lg font-bold mb-2 ${isSuccess ? "text-green-600" : "text-yellow-600"}`}>
-                  {dialogMessage.split("\n").map((line, index) => (
-                    <div key={index}>{line}</div>
-                  ))}
-                </div>
-              </div>
-
-              {/* 閉じるボタン */}
-              <div className="flex justify-center mb-4">
-                <button
-                  onClick={() => {
-                    setShowDialog(false);
-                    // 手動で閉じた場合もモーダルを閉じる
-                    if (shouldCloseModal) {
-                      setTimeout(() => {
-                        onUploadSuccess();
-                        setShouldCloseModal(false);
-                      }, 500);
-                    }
-                  }}
-                  className={`px-6 py-2 rounded-full text-white font-medium transition-all duration-200 hover:scale-105 ${
-                    isSuccess ? "bg-green-500 hover:bg-green-600" : "bg-yellow-500 hover:bg-yellow-600"
-                  }`}
-                >
-                  OK
-                </button>
-              </div>
-
-              {/* プログレスバー */}
-              <div className="w-full bg-gray-200 rounded-full h-1">
-                <div className={`h-1 rounded-full progress-bar ${isSuccess ? "bg-green-500" : "bg-yellow-500"}`}></div>
-              </div>
-              <p className="text-xs text-gray-500 text-center mt-1">5秒後に自動で閉じます</p>
-            </div>
-          </div>
-        )}
       </div>
+
+      {/* 結婚式確認ダイアログ */}
+      <WeddingConfirmDialog isOpen={showWeddingConfirm} onConfirm={handleWeddingConfirm} onCancel={handleWeddingCancel} />
+
+      {/* 結果ダイアログ */}
+      <UploadResultDialog
+        isOpen={showResultDialog}
+        isSuccess={isResultSuccess}
+        message={resultMessage}
+        onClose={handleResultDialogClose}
+        autoCloseDelay={3000}
+      />
     </>
   );
 }
