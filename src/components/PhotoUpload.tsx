@@ -1,13 +1,12 @@
-// PhotoUpload.tsx の修正版
+// PhotoUpload.tsx - シンプル版（ダイアログ内蔵）
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Amplify } from "aws-amplify";
 import { uploadData } from "aws-amplify/storage";
 import { getCurrentUser } from "aws-amplify/auth";
 import { v4 as uuidv4 } from "uuid";
 import awsconfig from "../aws-exports";
-import SuccessDialog from "./SuccessDialog";
 
 // Amplifyの設定
 Amplify.configure(awsconfig);
@@ -29,14 +28,31 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
   const [uploading, setUploading] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<SelectedFile[]>([]);
   const [caption, setCaption] = useState("");
-  const [showSuccessDialog, setShowSuccessDialog] = useState(false);
-  const [dialogData, setDialogData] = useState({
-    title: "",
-    message: "",
-    uploadedCount: 0,
-    failedCount: 0,
-  });
+
+  // シンプルなダイアログ状態
+  const [showDialog, setShowDialog] = useState(false);
+  const [dialogMessage, setDialogMessage] = useState("");
+  const [isSuccess, setIsSuccess] = useState(true);
+  const [shouldCloseModal, setShouldCloseModal] = useState(false);
+
   const buttonRef = useRef<HTMLButtonElement>(null);
+
+  // 3秒後に自動でダイアログを閉じる
+  useEffect(() => {
+    if (showDialog) {
+      const timer = setTimeout(() => {
+        setShowDialog(false);
+        // ダイアログが閉じた後にモーダルも閉じる
+        if (shouldCloseModal) {
+          setTimeout(() => {
+            onUploadSuccess();
+            setShouldCloseModal(false);
+          }, 300);
+        }
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [showDialog, shouldCloseModal, onUploadSuccess]);
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || []);
@@ -82,6 +98,20 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
         }
       });
     }
+  };
+
+  const showSuccessDialog = (message: string) => {
+    setDialogMessage(message);
+    setIsSuccess(true);
+    setShowDialog(true);
+    setShouldCloseModal(true);
+  };
+
+  const showErrorDialog = (message: string) => {
+    setDialogMessage(message);
+    setIsSuccess(false);
+    setShowDialog(true);
+    setShouldCloseModal(true);
   };
 
   const handleUpload = async (e: React.MouseEvent<HTMLButtonElement>) => {
@@ -160,34 +190,15 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
       const fileInput = document.getElementById("file-input") as HTMLInputElement;
       if (fileInput) fileInput.value = "";
 
-      onUploadSuccess();
-
-      // カスタムダイアログで結果を表示
+      // シンプルなダイアログ表示（onUploadSuccessは自動で後から実行）
       if (failureCount === 0) {
-        setDialogData({
-          title: "アップロード完了！",
-          message: `${successCount}枚の写真を正常にアップロードしました`,
-          uploadedCount: successCount,
-          failedCount: 0,
-        });
+        showSuccessDialog(`🎉 アップロード完了！\n${successCount}枚の写真を投稿しました\nありがとうございます！ Rikito $ Yuria ❤️`);
       } else {
-        setDialogData({
-          title: "アップロード完了",
-          message: `${successCount}枚が成功し、${failureCount}枚が失敗しました`,
-          uploadedCount: successCount,
-          failedCount: failureCount,
-        });
+        showErrorDialog(`⚠️ アップロード完了\n${successCount}枚が成功、${failureCount}枚が失敗しました`);
       }
-      setShowSuccessDialog(true);
     } catch (error) {
       console.error("Upload error:", error);
-      setDialogData({
-        title: "アップロードエラー",
-        message: "アップロード中にエラーが発生しました",
-        uploadedCount: 0,
-        failedCount: selectedFiles.length,
-      });
-      setShowSuccessDialog(true);
+      showErrorDialog("❌ アップロードエラー\nアップロード中にエラーが発生しました");
     } finally {
       setUploading(false);
     }
@@ -310,6 +321,34 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
             background-size: 0% 0%, 0% 0%, 0% 0%, 0% 0%, 0% 0%, 0% 0%;
           }
         }
+
+        .dialog-slide-in {
+          animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+          from {
+            transform: translateY(-20px);
+            opacity: 0;
+          }
+          to {
+            transform: translateY(0);
+            opacity: 1;
+          }
+        }
+
+        .progress-bar {
+          animation: progress 3s linear forwards;
+        }
+
+        @keyframes progress {
+          from {
+            width: 100%;
+          }
+          to {
+            width: 0%;
+          }
+        }
       `}</style>
 
       {/* モーダル内に完全に収まるレイアウト */}
@@ -410,15 +449,66 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
           </button>
         </div>
 
-        {/* サクセスダイアログ */}
-        <SuccessDialog
-          isOpen={showSuccessDialog}
-          onClose={() => setShowSuccessDialog(false)}
-          title={dialogData.title}
-          message={dialogData.message}
-          uploadedCount={dialogData.uploadedCount}
-          failedCount={dialogData.failedCount}
-        />
+        {/* シンプルなダイアログ（内蔵） */}
+        {showDialog && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[9999] p-4">
+            <div
+              className={`bg-white rounded-3xl p-6 max-w-sm w-full mx-auto shadow-2xl border border-gray-200 dialog-slide-in ${
+                isSuccess ? "border-green-200" : "border-yellow-200"
+              }`}
+              style={{ zIndex: 10000 }}
+            >
+              {/* アイコン */}
+              <div className="text-center mb-4">
+                <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${isSuccess ? "bg-green-100" : "bg-yellow-100"}`}>
+                  {isSuccess ? (
+                    <svg className="w-8 h-8 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                  ) : (
+                    <svg className="w-8 h-8 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01" />
+                    </svg>
+                  )}
+                </div>
+
+                {/* メッセージ */}
+                <div className={`text-lg font-bold mb-2 ${isSuccess ? "text-green-600" : "text-yellow-600"}`}>
+                  {dialogMessage.split("\n").map((line, index) => (
+                    <div key={index}>{line}</div>
+                  ))}
+                </div>
+              </div>
+
+              {/* 閉じるボタン */}
+              <div className="flex justify-center mb-4">
+                <button
+                  onClick={() => {
+                    setShowDialog(false);
+                    // 手動で閉じた場合もモーダルを閉じる
+                    if (shouldCloseModal) {
+                      setTimeout(() => {
+                        onUploadSuccess();
+                        setShouldCloseModal(false);
+                      }, 300);
+                    }
+                  }}
+                  className={`px-6 py-2 rounded-full text-white font-medium transition-all duration-200 hover:scale-105 ${
+                    isSuccess ? "bg-green-500 hover:bg-green-600" : "bg-yellow-500 hover:bg-yellow-600"
+                  }`}
+                >
+                  OK
+                </button>
+              </div>
+
+              {/* プログレスバー */}
+              <div className="w-full bg-gray-200 rounded-full h-1">
+                <div className={`h-1 rounded-full progress-bar ${isSuccess ? "bg-green-500" : "bg-yellow-500"}`}></div>
+              </div>
+              <p className="text-xs text-gray-500 text-center mt-1">3秒後に自動で閉じます</p>
+            </div>
+          </div>
+        )}
       </div>
     </>
   );
