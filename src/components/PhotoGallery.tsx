@@ -330,12 +330,12 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
         ))}
       </div>
 
-      {/* アルバム詳細表示モーダル（スライド機能付き） */}
+      {/* アルバム詳細表示モーダル（フルスクリーン・スクロール対応） */}
       {selectedAlbum && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="relative max-w-4xl w-full h-full flex flex-col" onClick={(e) => e.stopPropagation()}>
-            {/* ヘッダー */}
-            <div className="flex justify-between items-center p-4">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 overflow-y-auto">
+          {/* ヘッダー - 固定 */}
+          <div className="sticky top-0 z-20 bg-black/60 backdrop-blur-sm border-b border-white/10">
+            <div className="flex justify-between items-center p-4 max-w-4xl mx-auto">
               <div className="text-white">
                 <p className="font-semibold text-lg">{selectedAlbum.uploaderName || selectedAlbum.uploadedBy}</p>
                 <p className="text-sm opacity-80">
@@ -389,67 +389,74 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
                 </button>
               </div>
             </div>
+          </div>
 
+          {/* メインコンテンツエリア */}
+          <div className="max-w-4xl mx-auto">
             {/* 写真表示エリア */}
-            <div className="flex-1 flex items-center justify-center relative px-4" style={{ paddingBottom: selectedAlbum.caption ? "140px" : "20px" }}>
+            <div className="relative px-4 py-2 flex items-center justify-center">
               {/* メイン写真 */}
-              <img
-                src={selectedAlbum.photos[currentPhotoIndex]?.url}
-                alt={selectedAlbum.caption || "Wedding photo"}
-                className="max-w-full max-h-full object-contain"
-              />
+              <div className="relative max-w-full">
+                <img
+                  src={selectedAlbum.photos[currentPhotoIndex]?.url}
+                  alt={selectedAlbum.caption || "Wedding photo"}
+                  className="max-w-full max-h-[80vh] object-contain mx-auto"
+                />
 
-              {/* 前の写真ボタン */}
-              {selectedAlbum.totalPhotos > 1 && currentPhotoIndex > 0 && (
-                <button
-                  onClick={prevPhoto}
-                  className="absolute left-4 top-1/2 transform -translate-y-1/2 w-12 h-12 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center text-white hover:bg-white/30 transition-colors"
-                >
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                  </svg>
-                </button>
-              )}
+                {/* 前の写真ボタン */}
+                {selectedAlbum.totalPhotos > 1 && currentPhotoIndex > 0 && (
+                  <button
+                    onClick={prevPhoto}
+                    className="absolute left-4 top-1/2 transform -translate-y-1/2 w-12 h-12 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center text-white hover:bg-white/30 transition-colors"
+                  >
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                    </svg>
+                  </button>
+                )}
 
-              {/* 次の写真ボタン */}
-              {selectedAlbum.totalPhotos > 1 && currentPhotoIndex < selectedAlbum.totalPhotos - 1 && (
-                <button
-                  onClick={nextPhoto}
-                  className="absolute right-4 top-1/2 transform -translate-y-1/2 w-12 h-12 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center text-white hover:bg-white/30 transition-colors"
-                >
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                  </svg>
-                </button>
-              )}
+                {/* 次の写真ボタン */}
+                {selectedAlbum.totalPhotos > 1 && currentPhotoIndex < selectedAlbum.totalPhotos - 1 && (
+                  <button
+                    onClick={nextPhoto}
+                    className="absolute right-4 top-1/2 transform -translate-y-1/2 w-12 h-12 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center text-white hover:bg-white/30 transition-colors"
+                  >
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* サムネイル表示（複数枚の場合） */}
             {selectedAlbum.totalPhotos > 1 && (
-              <div className="absolute bottom-20 left-4 right-4">
-                <div className="flex justify-center space-x-2 overflow-x-auto pb-2">
-                  {selectedAlbum.photos.map((photo, index) => (
-                    <button
-                      key={photo.photoId}
-                      onClick={() => goToPhoto(index)}
-                      className={`flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 transition-all ${
-                        currentPhotoIndex === index ? "border-pink-400 scale-110" : "border-white/30 hover:border-white/60"
-                      }`}
-                    >
-                      <img src={photo.url} alt={`Thumbnail ${index + 1}`} className="w-full h-full object-cover" />
-                    </button>
-                  ))}
+              <div className="px-4 py-2">
+                <div className="max-w-4xl mx-auto">
+                  <div className="flex justify-center">
+                    <div className="flex space-x-2 overflow-x-auto p-2 max-w-full">
+                      {selectedAlbum.photos.map((photo, index) => (
+                        <button
+                          key={photo.photoId}
+                          onClick={() => goToPhoto(index)}
+                          className={`flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 transition-all ${
+                            currentPhotoIndex === index ? "border-pink-400 scale-110 shadow-lg" : "border-white/30 hover:border-white/60 hover:scale-105"
+                          }`}
+                        >
+                          <img src={photo.url} alt={`写真 ${index + 1}`} className="w-full h-full object-cover" />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
 
-            {/* キャプション - 下部に固定表示 */}
+            {/* キャプション表示（写真の下） */}
             {selectedAlbum.caption && (
-              <div className="absolute bottom-4 left-4 right-4">
-                <div className="bg-gradient-to-r from-pink-500/90 to-rose-500/90 backdrop-blur-sm rounded-2xl px-5 py-5 shadow-lg max-h-32">
-                  <div className="max-h-20 overflow-y-auto scrollbar-thin scrollbar-thumb-white/30 scrollbar-track-transparent">
-                    <p className="text-white text-xs font-medium text-center leading-relaxed whitespace-pre-wrap">{selectedAlbum.caption}</p>
-                  </div>
+              <div className="px-4 pb-6">
+                <div className="bg-gradient-to-r from-pink-500/90 to-rose-500/90 backdrop-blur-sm rounded-2xl px-5 py-5 shadow-lg max-w-2xl mx-auto">
+                  <p className="text-white text-sm font-medium text-center leading-relaxed whitespace-pre-wrap">{selectedAlbum.caption}</p>
                 </div>
               </div>
             )}
