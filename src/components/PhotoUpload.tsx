@@ -7,6 +7,7 @@ import { uploadData } from "aws-amplify/storage";
 import { getCurrentUser } from "aws-amplify/auth";
 import { v4 as uuidv4 } from "uuid";
 import awsconfig from "../aws-exports";
+import SuccessDialog from "./SuccessDialog";
 
 // Amplifyの設定
 Amplify.configure(awsconfig);
@@ -28,6 +29,13 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
   const [uploading, setUploading] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<SelectedFile[]>([]);
   const [caption, setCaption] = useState("");
+  const [showSuccessDialog, setShowSuccessDialog] = useState(false);
+  const [dialogData, setDialogData] = useState({
+    title: "",
+    message: "",
+    uploadedCount: 0,
+    failedCount: 0,
+  });
   const buttonRef = useRef<HTMLButtonElement>(null);
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -154,14 +162,32 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
 
       onUploadSuccess();
 
+      // カスタムダイアログで結果を表示
       if (failureCount === 0) {
-        alert(`${successCount}枚の写真をアップロードしました！`);
+        setDialogData({
+          title: "アップロード完了！",
+          message: `${successCount}枚の写真を正常にアップロードしました`,
+          uploadedCount: successCount,
+          failedCount: 0,
+        });
       } else {
-        alert(`${successCount}枚の写真をアップロードしました。${failureCount}枚は失敗しました。`);
+        setDialogData({
+          title: "アップロード完了",
+          message: `${successCount}枚が成功し、${failureCount}枚が失敗しました`,
+          uploadedCount: successCount,
+          failedCount: failureCount,
+        });
       }
+      setShowSuccessDialog(true);
     } catch (error) {
       console.error("Upload error:", error);
-      alert("アップロードに失敗しました");
+      setDialogData({
+        title: "アップロードエラー",
+        message: "アップロード中にエラーが発生しました",
+        uploadedCount: 0,
+        failedCount: selectedFiles.length,
+      });
+      setShowSuccessDialog(true);
     } finally {
       setUploading(false);
     }
@@ -383,6 +409,16 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
             )}
           </button>
         </div>
+
+        {/* サクセスダイアログ */}
+        <SuccessDialog
+          isOpen={showSuccessDialog}
+          onClose={() => setShowSuccessDialog(false)}
+          title={dialogData.title}
+          message={dialogData.message}
+          uploadedCount={dialogData.uploadedCount}
+          failedCount={dialogData.failedCount}
+        />
       </div>
     </>
   );
