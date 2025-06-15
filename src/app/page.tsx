@@ -204,10 +204,11 @@ export default function Home() {
 
       {/* アップロードモーダル */}
       {showUploadModal && (
-        <div className="fixed inset-0 bg-black/20 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white/95 backdrop-blur-md rounded-2xl w-full max-w-md shadow-2xl border border-white/30">
-            <div className="p-6">
-              <div className="flex items-center justify-between mb-6">
+        <div className="fixed inset-0 bg-black/20 backdrop-blur-sm flex items-start justify-center z-50 p-4 pt-8 pb-8">
+          <div className="bg-white/95 backdrop-blur-md rounded-2xl w-full max-w-md shadow-2xl border border-white/30 my-auto max-h-[calc(100vh-4rem)] flex flex-col">
+            {/* ヘッダー - 固定 */}
+            <div className="flex-shrink-0 p-6 pb-4">
+              <div className="flex items-center justify-between">
                 <h2 className="text-xl font-bold bg-gradient-to-r from-pink-600 to-purple-600 bg-clip-text text-transparent">写真をアップロード</h2>
                 <button onClick={() => setShowUploadModal(false)} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
                   <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -215,7 +216,10 @@ export default function Home() {
                   </svg>
                 </button>
               </div>
+            </div>
 
+            {/* コンテンツエリア - スクロール可能 */}
+            <div className="flex-1 min-h-0 px-6 pb-6 overflow-y-auto">
               <PhotoUpload onUploadSuccess={handleUploadSuccess} userInfo={userInfo} />
             </div>
           </div>
