@@ -1,11 +1,22 @@
 "use client";
 
 import { useState } from "react";
+import { Amplify } from "aws-amplify";
+import { post } from "aws-amplify/api";
+import awsconfig from "../aws-exports";
+
+// Amplifyの設定
+Amplify.configure(awsconfig);
 
 interface UserRegistrationModalProps {
   passcode: string;
   onRegister: (name: string) => void;
   onLogout: () => void;
+}
+
+interface ApiResponse {
+  success: boolean;
+  message?: string;
 }
 
 export default function UserRegistrationModal({ passcode, onRegister, onLogout }: UserRegistrationModalProps) {
@@ -22,7 +33,31 @@ export default function UserRegistrationModal({ passcode, onRegister, onLogout }
 
     setLoading(true);
     try {
-      await onRegister(name.trim());
+      // DynamoDBにユーザー情報を保存
+      const restOperation = post({
+        apiName: "weddingAPI",
+        path: "/photos/user",
+        options: {
+          body: {
+            passcode: passcode,
+            name: name.trim(),
+          },
+        },
+      });
+
+      const response = await restOperation.response;
+      const data = (await response.body.json()) as unknown as ApiResponse;
+
+      if (data.success) {
+        console.log("✅ User registration successful");
+        // 登録成功時にonRegisterを呼び出し
+        await onRegister(name.trim());
+      } else {
+        throw new Error(data.message || "User registration failed");
+      }
+    } catch (error) {
+      console.error("Error registering user:", error);
+      alert("登録に失敗しました。もう一度お試しください。");
     } finally {
       setLoading(false);
     }

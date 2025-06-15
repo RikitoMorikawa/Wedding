@@ -41,20 +41,31 @@ interface PhotoGalleryProps {
   } | null;
 }
 
+// ソートタイプの定義
+type SortType = "date" | "favorites";
+
 export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryProps) {
   const [albums, setAlbums] = useState<Album[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedAlbum, setSelectedAlbum] = useState<Album | null>(null);
   const [currentPhotoIndex, setCurrentPhotoIndex] = useState(0);
   const [favoriteLoading, setFavoriteLoading] = useState(false);
+  const [sortType, setSortType] = useState<SortType>("date"); // ソートタイプを管理
 
   // API Base URL
   const API_BASE = awsconfig.aws_cloud_logic_custom[0].endpoint;
 
-  // お気に入り件数を取得
+  // お気に入り件数を取得（エラーハンドリング強化）
   const fetchFavoriteCount = async (targetType: string, targetId: string): Promise<number> => {
     try {
       const response = await fetch(`${API_BASE}/favorites/count/${targetType}/${targetId}`);
+
+      // レスポンスステータスをチェック
+      if (!response.ok) {
+        console.warn(`Favorite count API returned ${response.status} for ${targetId}`);
+        return 0;
+      }
+
       const result = await response.json();
       return result.success ? result.count : 0;
     } catch (error) {
@@ -63,12 +74,19 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
     }
   };
 
-  // ユーザーのお気に入り状態をチェック
+  // ユーザーのお気に入り状態をチェック（エラーハンドリング強化）
   const checkFavoriteStatus = async (targetType: string, targetId: string): Promise<boolean> => {
     if (!userInfo?.passcode) return false;
 
     try {
       const response = await fetch(`${API_BASE}/favorites/check/${userInfo.passcode}/${targetType}/${targetId}`);
+
+      // レスポンスステータスをチェック
+      if (!response.ok) {
+        console.warn(`Favorite check API returned ${response.status} for ${targetId}`);
+        return false;
+      }
+
       const result = await response.json();
       return result.success ? result.isFavorite : false;
     } catch (error) {
@@ -77,7 +95,7 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
     }
   };
 
-  // お気に入り追加/削除
+  // お気に入り追加/削除（エラーハンドリング強化）
   const toggleFavorite = async (targetType: string, targetId: string): Promise<boolean> => {
     if (!userInfo?.passcode) return false;
 
@@ -100,27 +118,39 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
         }),
       });
 
+      // レスポンスステータスをチェック
+      if (!response.ok) {
+        console.warn(`Toggle favorite API returned ${response.status}`);
+        return currentStatus; // 元の状態を返す
+      }
+
       const result = await response.json();
 
       if (result.success) {
-        // 選択中のアルバムの状態を更新
+        // 選択中のアルバムの状態を更新（エラーハンドリング付き）
         if (selectedAlbum && selectedAlbum.albumId === targetId) {
-          const newFavoriteCount = await fetchFavoriteCount(targetType, targetId);
-          const newIsFavorite = await checkFavoriteStatus(targetType, targetId);
+          try {
+            const [newFavoriteCount, newIsFavorite] = await Promise.allSettled([
+              fetchFavoriteCount(targetType, targetId),
+              checkFavoriteStatus(targetType, targetId),
+            ]);
 
-          setSelectedAlbum((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  favoriteCount: newFavoriteCount,
-                  isFavorite: newIsFavorite,
-                }
-              : null
-          );
+            setSelectedAlbum((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    favoriteCount: newFavoriteCount.status === "fulfilled" ? newFavoriteCount.value : prev.favoriteCount,
+                    isFavorite: newIsFavorite.status === "fulfilled" ? newIsFavorite.value : !currentStatus,
+                  }
+                : null
+            );
+          } catch (error) {
+            console.warn("Error updating selected album favorite status:", error);
+          }
         }
 
-        // アルバム一覧の状態も更新
-        await fetchAlbums();
+        // アルバム一覧の状態も更新（非同期で実行して遅延を最小化）
+        fetchAlbums().catch((err) => console.warn("Error refreshing albums:", err));
 
         return !currentStatus;
       }
@@ -134,7 +164,32 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
     }
   };
 
-  // アルバム一覧を取得（お気に入り情報付き）
+  // アルバムをソートする関数
+  const sortAlbums = (albumsList: Album[], sortType: SortType): Album[] => {
+    const sortedAlbums = [...albumsList];
+
+    switch (sortType) {
+      case "favorites":
+        return sortedAlbums.sort((a, b) => {
+          // お気に入り件数の多い順（降順）
+          const aCount = a.favoriteCount || 0;
+          const bCount = b.favoriteCount || 0;
+          if (bCount !== aCount) {
+            return bCount - aCount;
+          }
+          // お気に入り件数が同じ場合は投稿日順（新しい順）
+          return new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime();
+        });
+      case "date":
+      default:
+        return sortedAlbums.sort((a, b) => {
+          // 投稿日順（新しい順）
+          return new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime();
+        });
+    }
+  };
+
+  // アルバム一覧を取得（お気に入り情報付き・エラーハンドリング強化）
   const fetchAlbums = async () => {
     try {
       setLoading(true);
@@ -154,17 +209,17 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
             // メイン写真URL取得
             const urlResult = await getUrl({ key: album.mainPhoto.s3Key });
 
-            // お気に入り件数取得
-            const favoriteCount = await fetchFavoriteCount("album", album.albumId);
-
-            // ユーザーのお気に入り状態取得
-            const isFavorite = await checkFavoriteStatus("album", album.albumId);
+            // お気に入り情報を並列取得（エラーが発生しても他の処理を続行）
+            const [favoriteCount, isFavorite] = await Promise.allSettled([
+              fetchFavoriteCount("album", album.albumId),
+              checkFavoriteStatus("album", album.albumId),
+            ]);
 
             return {
               ...album,
               mainPhotoUrl: urlResult.url.toString(),
-              favoriteCount: favoriteCount,
-              isFavorite: isFavorite,
+              favoriteCount: favoriteCount.status === "fulfilled" ? favoriteCount.value : 0,
+              isFavorite: isFavorite.status === "fulfilled" ? isFavorite.value : false,
             };
           } catch (error) {
             console.error("Error getting album data for", album.albumId, ":", error);
@@ -180,7 +235,10 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
 
       // メイン写真URLが取得できたアルバムのみを表示
       const validAlbums = albumsWithData.filter((album) => album.mainPhotoUrl);
-      setAlbums(validAlbums);
+
+      // ソート適用
+      const sortedAlbums = sortAlbums(validAlbums, sortType);
+      setAlbums(sortedAlbums);
     } catch (error) {
       console.error("Error fetching albums:", error);
     } finally {
@@ -243,9 +301,24 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
     setCurrentPhotoIndex(index);
   };
 
+  // ソートタイプが変更されたときにアルバムを再ソート
+  const handleSortChange = (newSortType: SortType) => {
+    setSortType(newSortType);
+    const sortedAlbums = sortAlbums(albums, newSortType);
+    setAlbums(sortedAlbums);
+  };
+
   useEffect(() => {
     fetchAlbums();
   }, [refreshTrigger, userInfo]);
+
+  // ソートタイプが変更されたときに再ソート
+  useEffect(() => {
+    if (albums.length > 0) {
+      const sortedAlbums = sortAlbums(albums, sortType);
+      setAlbums(sortedAlbums);
+    }
+  }, [sortType]);
 
   if (loading) {
     return (
@@ -279,8 +352,45 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
 
   return (
     <>
+      {/* 固定ソート切り替えボタン（画面左下・1行2列） */}
+      <div className="fixed bottom-4 left-4 z-40">
+        <div className="bg-white rounded-lg shadow-lg border p-1 flex">
+          <button
+            onClick={() => handleSortChange("date")}
+            className={`px-3 py-2 rounded-md text-sm font-medium transition-all duration-200 ${
+              sortType === "date" ? "bg-pink-500 text-white shadow-sm" : "text-gray-600 hover:text-gray-800 hover:bg-gray-50"
+            }`}
+          >
+            <div className="flex items-center space-x-1">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+                />
+              </svg>
+              <span>投稿順</span>
+            </div>
+          </button>
+          <button
+            onClick={() => handleSortChange("favorites")}
+            className={`px-3 py-2 rounded-md text-sm font-medium transition-all duration-200 ${
+              sortType === "favorites" ? "bg-pink-500 text-white shadow-sm" : "text-gray-600 hover:text-gray-800 hover:bg-gray-50"
+            }`}
+          >
+            <div className="flex items-center space-x-1">
+              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+              </svg>
+              <span>人気順</span>
+            </div>
+          </button>
+        </div>
+      </div>
+
       {/* アルバム一覧表示 */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 mx-2 mt-2">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 mx-2 mt-2 pb-20">
         {albums.map((album) => (
           <div
             key={album.albumId}
