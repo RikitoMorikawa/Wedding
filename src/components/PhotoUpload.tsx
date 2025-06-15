@@ -192,7 +192,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
 
       // シンプルなダイアログ表示（onUploadSuccessは自動で後から実行）
       if (failureCount === 0) {
-        showSuccessDialog(`🎉 アップロード完了！\n${successCount}枚の写真を投稿しました\nありがとうございます！ \nRikito & Yuria ❤️`);
+        showSuccessDialog(`🎉 アップロード完了！\n投稿ありがとうございます！ \nRikito & Yuria ❤️`);
       } else {
         showErrorDialog(`⚠️ アップロード完了\n${successCount}枚が成功、${failureCount}枚が失敗しました`);
       }
@@ -490,7 +490,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
                       setTimeout(() => {
                         onUploadSuccess();
                         setShouldCloseModal(false);
-                      }, 300);
+                      }, 500);
                     }
                   }}
                   className={`px-6 py-2 rounded-full text-white font-medium transition-all duration-200 hover:scale-105 ${
@@ -505,7 +505,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
               <div className="w-full bg-gray-200 rounded-full h-1">
                 <div className={`h-1 rounded-full progress-bar ${isSuccess ? "bg-green-500" : "bg-yellow-500"}`}></div>
               </div>
-              <p className="text-xs text-gray-500 text-center mt-1">3秒後に自動で閉じます</p>
+              <p className="text-xs text-gray-500 text-center mt-1">5秒後に自動で閉じます</p>
             </div>
           </div>
         )}
