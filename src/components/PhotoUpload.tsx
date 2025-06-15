@@ -192,7 +192,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
 
       // シンプルなダイアログ表示（onUploadSuccessは自動で後から実行）
       if (failureCount === 0) {
-        showSuccessDialog(`🎉 アップロード完了！\n${successCount}枚の写真を投稿しました\nありがとうございます！ \nRikito $ Yuria ❤️`);
+        showSuccessDialog(`🎉 アップロード完了！\n${successCount}枚の写真を投稿しました\nありがとうございます！ \nRikito & Yuria ❤️`);
       } else {
         showErrorDialog(`⚠️ アップロード完了\n${successCount}枚が成功、${failureCount}枚が失敗しました`);
       }
