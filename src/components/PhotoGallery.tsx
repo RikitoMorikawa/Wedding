@@ -333,9 +333,10 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
       {/* アルバム詳細表示モーダル（フルスクリーン・スクロール対応） */}
       {selectedAlbum && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 overflow-y-auto">
-          {/* ヘッダー - 固定 */}
-          <div className="sticky top-0 z-20 bg-black/60 backdrop-blur-sm border-b border-white/10">
-            <div className="flex justify-between items-center p-4 max-w-4xl mx-auto">
+          {/* メインコンテンツエリア */}
+          <div className="max-w-4xl mx-auto">
+            {/* ヘッダー */}
+            <div className="flex justify-between items-center p-4">
               <div className="text-white">
                 <p className="font-semibold text-lg">{selectedAlbum.uploaderName || selectedAlbum.uploadedBy}</p>
                 <p className="text-sm opacity-80">
@@ -454,8 +455,8 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
 
             {/* キャプション表示（写真の下） */}
             {selectedAlbum.caption && (
-              <div className="px-4 pb-6">
-                <div className="bg-gradient-to-r from-pink-500/90 to-rose-500/90 backdrop-blur-sm rounded-2xl px-5 py-5 shadow-lg max-w-2xl mx-auto">
+              <div className="px-4 py-4">
+                <div className="bg-gradient-to-r from-pink-500/90 to-rose-500/90 backdrop-blur-sm rounded-2xl px-2 py-4 shadow-lg max-w-2xl mx-auto">
                   <p className="text-white text-sm font-medium text-center leading-relaxed whitespace-pre-wrap">{selectedAlbum.caption}</p>
                 </div>
               </div>
