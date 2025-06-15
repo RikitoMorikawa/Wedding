@@ -378,13 +378,6 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
                   )}
                 </button>
 
-                {/* お気に入り件数表示 */}
-                {selectedAlbum.favoriteCount !== undefined && selectedAlbum.favoriteCount > 0 && (
-                  <div className="bg-white/20 backdrop-blur-sm rounded-full px-3 py-1">
-                    <span className="text-white text-sm font-medium">{selectedAlbum.favoriteCount}</span>
-                  </div>
-                )}
-
                 {/* 閉じるボタン */}
                 <button
                   onClick={() => setSelectedAlbum(null)}
