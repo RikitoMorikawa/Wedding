@@ -94,8 +94,11 @@ app.post("/photos/user", async function (req, res) {
   }
 });
 
-// アルバム一覧取得
+// アルバム一覧取得（isPublic フィルタリング対応）
 app.get("/photos/albums", async function (req, res) {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "*");
+  
   try {
     console.log("Photos table name:", process.env.STORAGE_PHOTOS_NAME);
 
@@ -104,7 +107,10 @@ app.get("/photos/albums", async function (req, res) {
     });
 
     const result = await docClient.send(command);
-    const photos = result.Items || [];
+    const allPhotos = result.Items || [];
+
+    // isPublic が true または未設定（既存データ）の写真のみを取得
+    const photos = allPhotos.filter(photo => photo.isPublic !== false);
 
     // アルバムごとにグループ化
     const albumsMap = new Map();
@@ -157,6 +163,137 @@ app.get("/photos/albums", async function (req, res) {
     });
   } catch (error) {
     console.error("Error getting albums:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// 自分の投稿写真一覧取得（公開/非公開切り替え用）
+app.get("/photos/user/:passcode/my-photos", async function (req, res) {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "*");
+
+  try {
+    const { passcode } = req.params;
+
+    const command = new ScanCommand({
+      TableName: process.env.STORAGE_PHOTOS_NAME,
+      FilterExpression: "uploadedBy = :uploadedBy",
+      ExpressionAttributeValues: {
+        ":uploadedBy": passcode,
+      },
+    });
+
+    const result = await docClient.send(command);
+    const photos = result.Items || [];
+
+    // アルバムごとにグループ化
+    const albumsMap = new Map();
+
+    photos.forEach((photo) => {
+      const albumId = photo.albumId || photo.photoId;
+
+      if (!albumsMap.has(albumId)) {
+        albumsMap.set(albumId, {
+          albumId: albumId,
+          photos: [],
+          mainPhoto: null,
+          uploadedBy: photo.uploadedBy,
+          uploaderName: photo.uploaderName,
+          uploadedAt: photo.uploadedAt,
+          caption: photo.caption || "",
+          totalPhotos: 1,
+          isPublic: photo.isPublic !== false, // デフォルトは公開
+        });
+      }
+
+      const album = albumsMap.get(albumId);
+      album.photos.push(photo);
+
+      // メイン写真を設定
+      if (photo.isMainPhoto || photo.photoIndex === 0 || (!album.mainPhoto && album.photos.length === 1)) {
+        album.mainPhoto = photo;
+        album.isPublic = photo.isPublic !== false;
+      }
+
+      album.totalPhotos = album.photos.length;
+    });
+
+    const albums = Array.from(albumsMap.values()).sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime());
+
+    res.json({
+      success: true,
+      albums: albums,
+    });
+  } catch (error) {
+    console.error("Error getting user photos:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// 写真の公開/非公開切り替え
+app.put("/photos/album/:albumId/visibility", async function (req, res) {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "*");
+
+  try {
+    const { albumId } = req.params;
+    const { isPublic, passcode } = req.body;
+
+    if (typeof isPublic !== 'boolean' || !passcode) {
+      return res.status(400).json({
+        success: false,
+        message: "isPublic (boolean) and passcode are required",
+      });
+    }
+
+    // まず、そのアルバムの写真を取得
+    const scanCommand = new ScanCommand({
+      TableName: process.env.STORAGE_PHOTOS_NAME,
+      FilterExpression: "(albumId = :albumId OR photoId = :albumId) AND uploadedBy = :uploadedBy",
+      ExpressionAttributeValues: {
+        ":albumId": albumId,
+        ":uploadedBy": passcode,
+      },
+    });
+
+    const result = await docClient.send(scanCommand);
+    const photos = result.Items || [];
+
+    if (photos.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Album not found or not owned by user",
+      });
+    }
+
+    // 各写真のisPublicを更新
+    const updatePromises = photos.map(async (photo) => {
+      const updateCommand = new PutCommand({
+        TableName: process.env.STORAGE_PHOTOS_NAME,
+        Item: {
+          ...photo,
+          isPublic: isPublic,
+          updatedAt: new Date().toISOString(),
+        },
+      });
+      return docClient.send(updateCommand);
+    });
+
+    await Promise.all(updatePromises);
+
+    res.json({
+      success: true,
+      message: `Album ${isPublic ? 'published' : 'unpublished'} successfully`,
+      updatedPhotos: photos.length,
+    });
+  } catch (error) {
+    console.error("Error updating album visibility:", error);
     res.status(500).json({
       success: false,
       error: error.message,

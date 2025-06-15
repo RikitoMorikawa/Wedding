@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { Amplify } from "aws-amplify";
 import { getUrl } from "aws-amplify/storage";
 import awsconfig from "../aws-exports";
+import ConfirmDialog from "./ConfirmDialog";
 
 // Amplifyの設定
 Amplify.configure(awsconfig);
@@ -31,6 +32,7 @@ interface Album {
   mainPhotoUrl?: string;
   favoriteCount?: number;
   isFavorite?: boolean;
+  isPublic?: boolean; // 公開/非公開状態を追加
 }
 
 interface PhotoGalleryProps {
@@ -51,6 +53,8 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
   const [currentPhotoIndex, setCurrentPhotoIndex] = useState(0);
   const [favoriteLoading, setFavoriteLoading] = useState(false);
   const [sortType, setSortType] = useState<SortType>("date"); // ソートタイプを管理
+  const [visibilityLoading, setVisibilityLoading] = useState(false); // 削除/復元切り替えのローディング状態
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
 
   // API Base URL
   const API_BASE = awsconfig.aws_cloud_logic_custom[0].endpoint;
@@ -164,6 +168,60 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
     }
   };
 
+  // 写真の削除/復元切り替え
+  const toggleVisibility = async (albumId: string, currentStatus: boolean): Promise<boolean> => {
+    if (!userInfo?.passcode) return currentStatus;
+
+    setVisibilityLoading(true);
+
+    try {
+      const response = await fetch(`${API_BASE}/photos/album/${albumId}/visibility`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          isPublic: !currentStatus,
+          passcode: userInfo.passcode,
+        }),
+      });
+
+      if (!response.ok) {
+        console.warn(`Toggle visibility API returned ${response.status}`);
+        return currentStatus;
+      }
+
+      const result = await response.json();
+
+      if (result.success) {
+        // 選択中のアルバムの状態を更新
+        if (selectedAlbum && selectedAlbum.albumId === albumId) {
+          setSelectedAlbum((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  isPublic: !currentStatus,
+                }
+              : null
+          );
+        }
+
+        // アルバム一覧の状態も更新
+        fetchAlbums().catch((err) => console.warn("Error refreshing albums:", err));
+
+        return !currentStatus;
+      }
+
+      return currentStatus;
+    } catch (error) {
+      console.error("Error toggling visibility:", error);
+      alert("削除/復元の切り替えに失敗しました。もう一度お試しください。");
+      return currentStatus;
+    } finally {
+      setVisibilityLoading(false);
+    }
+  };
+
   // アルバムをソートする関数
   const sortAlbums = (albumsList: Album[], sortType: SortType): Album[] => {
     const sortedAlbums = [...albumsList];
@@ -187,6 +245,23 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
           return new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime();
         });
     }
+  };
+
+  // 現在のユーザーが投稿者かどうかをチェック
+  const isOwner = (album: Album): boolean => {
+    return userInfo?.passcode === album.uploadedBy;
+  };
+
+  // 確認ダイアログでOKを選択した場合
+  const handleConfirmClose = () => {
+    setShowConfirmDialog(false);
+    setSelectedAlbum(null);
+  };
+
+  // 確認ダイアログでキャンセルを選択した場合
+  const handleCancelClose = () => {
+    setShowConfirmDialog(false);
+    // モーダルは開いたまま
   };
 
   // アルバム一覧を取得（お気に入り情報付き・エラーハンドリング強化）
@@ -220,6 +295,7 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
               mainPhotoUrl: urlResult.url.toString(),
               favoriteCount: favoriteCount.status === "fulfilled" ? favoriteCount.value : 0,
               isFavorite: isFavorite.status === "fulfilled" ? isFavorite.value : false,
+              isPublic: album.isPublic !== false, // デフォルトは公開（既存データ互換性）
             };
           } catch (error) {
             console.error("Error getting album data for", album.albumId, ":", error);
@@ -228,6 +304,7 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
               mainPhotoUrl: undefined,
               favoriteCount: 0,
               isFavorite: false,
+              isPublic: true, // デフォルトは公開
             };
           }
         })
@@ -278,6 +355,7 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
         photos: validPhotos,
         favoriteCount: favoriteCount,
         isFavorite: isFavorite,
+        isPublic: album.isPublic !== false, // デフォルトは公開
       });
       setCurrentPhotoIndex(0);
     } catch (error) {
@@ -306,6 +384,17 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
     setSortType(newSortType);
     const sortedAlbums = sortAlbums(albums, newSortType);
     setAlbums(sortedAlbums);
+  };
+
+  // モーダルを閉じる際の確認処理
+  const handleCloseModal = () => {
+    // 削除済み（isPublic=false）の写真の場合は確認ダイアログを表示
+    if (selectedAlbum && selectedAlbum.isPublic === false && isOwner(selectedAlbum)) {
+      setShowConfirmDialog(true);
+    } else {
+      // 通常の場合はそのまま閉じる
+      setSelectedAlbum(null);
+    }
   };
 
   useEffect(() => {
@@ -416,6 +505,23 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
               </div>
             )}
 
+            {/* 自分の投稿の場合の削除済みバッジ */}
+            {isOwner(album) && album.isPublic === false && (
+              <div className="absolute top-2 right-2 ml-1">
+                <div className="bg-red-600/90 backdrop-blur-sm rounded-lg px-2 py-1 flex items-center space-x-1">
+                  <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                    />
+                  </svg>
+                  <span className="text-white text-xs font-medium">削除済み</span>
+                </div>
+              </div>
+            )}
+
             {/* お気に入り件数バッジ */}
             {album.favoriteCount !== undefined && album.favoriteCount > 0 && (
               <div className="absolute top-2 left-2">
@@ -465,13 +571,49 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
                 </p>
               </div>
 
-              {/* お気に入りボタンと閉じるボタン */}
-              <div className="flex items-center space-x-2">
+              {/* 右側：公開/非公開ボタン、お気に入りボタン、閉じるボタン */}
+              <div className="flex items-center space-x-3">
+                {/* 削除/復元切り替えボタン（自分の投稿のみ） */}
+                {isOwner(selectedAlbum) && (
+                  <button
+                    onClick={() => toggleVisibility(selectedAlbum.albumId, selectedAlbum.isPublic !== false)}
+                    disabled={visibilityLoading}
+                    className={`w-10 h-10 backdrop-blur-sm rounded-full flex items-center justify-center transition-colors ${
+                      selectedAlbum.isPublic !== false
+                        ? "bg-gray-500/80 hover:bg-gray-600/80 text-white hover:bg-red-600/80"
+                        : "bg-blue-500/80 text-white hover:bg-blue-600/80"
+                    } ${visibilityLoading ? "opacity-50 cursor-not-allowed" : ""}`}
+                    title={selectedAlbum.isPublic !== false ? "削除（他のユーザーに非表示）" : "復元（再表示）"}
+                  >
+                    {visibilityLoading ? (
+                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                    ) : selectedAlbum.isPublic !== false ? (
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                        />
+                      </svg>
+                    ) : (
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                        />
+                      </svg>
+                    )}
+                  </button>
+                )}
+
                 {/* お気に入りボタン */}
                 <button
                   onClick={() => toggleFavorite("album", selectedAlbum.albumId)}
                   disabled={favoriteLoading}
-                  className={`w-10 h-10 backdrop-blur-sm rounded-full flex items-center justify-center transition-all ${
+                  className={`w-10 h-10 backdrop-blur-sm rounded-full flex items-center justify-center transition-colors ${
                     selectedAlbum.isFavorite ? "bg-red-500/80 text-white hover:bg-red-600/80" : "bg-white/20 text-white hover:bg-white/30"
                   } ${favoriteLoading ? "opacity-50 cursor-not-allowed" : ""}`}
                 >
@@ -491,7 +633,7 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
 
                 {/* 閉じるボタン */}
                 <button
-                  onClick={() => setSelectedAlbum(null)}
+                  onClick={handleCloseModal}
                   className="w-10 h-10 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center text-white hover:bg-white/30 transition-colors"
                 >
                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -574,6 +716,9 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
           </div>
         </div>
       )}
+
+      {/* 確認ダイアログ */}
+      <ConfirmDialog isOpen={showConfirmDialog} onConfirm={handleConfirmClose} onCancel={handleCancelClose} />
     </>
   );
 }

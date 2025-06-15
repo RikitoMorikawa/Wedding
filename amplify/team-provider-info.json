@@ -19,7 +19,7 @@
       "function": {
         "weddingPhotosFunction": {
           "deploymentBucketName": "amplify-wedding-dev-e48b3-deployment",
-          "s3Key": "amplify-builds/weddingPhotosFunction-4364332b714976797462-build.zip"
+          "s3Key": "amplify-builds/weddingPhotosFunction-6e592f2b4d3137516431-build.zip"
         }
       },
       "storage": {
