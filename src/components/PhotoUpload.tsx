@@ -7,7 +7,6 @@ import { getCurrentUser } from "aws-amplify/auth";
 import { v4 as uuidv4 } from "uuid";
 import awsconfig from "../aws-exports";
 import WeddingConfirmDialog from "./WeddingConfirmDialog";
-import UploadResultDialog from "./UploadResultDialog";
 import BubblyButton from "./BubblyButton";
 
 // Amplifyの設定
@@ -30,11 +29,6 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
   const [uploading, setUploading] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<SelectedFile[]>([]);
   const [caption, setCaption] = useState("");
-
-  // 結果ダイアログの状態
-  const [showResultDialog, setShowResultDialog] = useState(false);
-  const [resultMessage, setResultMessage] = useState("");
-  const [isResultSuccess, setIsResultSuccess] = useState(true);
 
   // 結婚式確認ダイアログの状態
   const [showWeddingConfirm, setShowWeddingConfirm] = useState(false);
@@ -84,29 +78,6 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
           }, 700);
         }
       });
-    }
-  };
-
-  const showSuccessDialog = (message: string) => {
-    setResultMessage(message);
-    setIsResultSuccess(true);
-    setShowResultDialog(true);
-  };
-
-  const showErrorDialog = (message: string) => {
-    setResultMessage(message);
-    setIsResultSuccess(false);
-    setShowResultDialog(true);
-  };
-
-  // 結果ダイアログを閉じた時の処理
-  const handleResultDialogClose = () => {
-    setShowResultDialog(false);
-    // 成功時は少し待ってからモーダルを閉じる
-    if (isResultSuccess) {
-      setTimeout(() => {
-        onUploadSuccess();
-      }, 300);
     }
   };
 
@@ -203,15 +174,24 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
       const fileInput = document.getElementById("file-input") as HTMLInputElement;
       if (fileInput) fileInput.value = "";
 
-      // 結果ダイアログ表示
+      // 🔥 重要：アップロード完了後にモーダルを閉じる
       if (failureCount === 0) {
-        showSuccessDialog(`🎉 アップロード完了！\n投稿ありがとうございます！ \nRikito & Yuria ❤️`);
+        // 成功時はダイアログを表示せずに即座にモーダルを閉じる
+        onUploadSuccess();
       } else {
-        showErrorDialog(`⚠️ アップロード完了\n${successCount}枚が成功、${failureCount}枚が失敗しました`);
+        // エラーがある場合のみアラートを表示してからモーダルを閉じる
+        alert(`⚠️ アップロード完了\n${successCount}枚が成功、${failureCount}枚が失敗しました`);
+        setTimeout(() => {
+          onUploadSuccess();
+        }, 1000);
       }
     } catch (error) {
       console.error("Upload error:", error);
-      showErrorDialog("❌ アップロードエラー\nアップロード中にエラーが発生しました");
+      alert("❌ アップロードエラー\nアップロード中にエラーが発生しました");
+      // エラーの場合もモーダルを閉じる
+      setTimeout(() => {
+        onUploadSuccess();
+      }, 1000);
     } finally {
       setUploading(false);
     }
@@ -322,15 +302,6 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
 
       {/* 結婚式確認ダイアログ */}
       <WeddingConfirmDialog isOpen={showWeddingConfirm} onConfirm={handleWeddingConfirm} onCancel={handleWeddingCancel} />
-
-      {/* 結果ダイアログ */}
-      <UploadResultDialog
-        isOpen={showResultDialog}
-        isSuccess={isResultSuccess}
-        message={resultMessage}
-        onClose={handleResultDialogClose}
-        autoCloseDelay={3000}
-      />
     </>
   );
 }
