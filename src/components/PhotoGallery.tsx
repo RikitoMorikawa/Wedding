@@ -58,6 +58,19 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
   const [sortType, setSortType] = useState<SortType>("date"); // ソートタイプを管理
   const [visibilityLoading, setVisibilityLoading] = useState(false); // 削除/復元切り替えのローディング状態
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  const [mediaFilter, setMediaFilter] = useState<"all" | "photo" | "video">("all");
+
+  // フィルター適用関数を追加
+  const getFilteredAlbums = () => {
+    if (mediaFilter === "all") {
+      return albums;
+    }
+
+    return albums.filter((album) => {
+      // アルバムのメイン写真のmediaTypeでフィルタリング
+      return album.mainPhoto?.mediaType === mediaFilter;
+    });
+  };
 
   // API Base URL
   const API_BASE = awsconfig.aws_cloud_logic_custom[0].endpoint;
@@ -278,33 +291,14 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
       const response = await fetch(`${API_BASE}/photos/albums`);
       const result = await response.json();
 
-      console.log("=== DEBUG: API Response ===");
-      console.log("API URL:", `${API_BASE}/photos/albums`);
-      console.log("Response:", result);
-      console.log("Albums count:", result.albums?.length || 0);
-
       if (!result.success) {
         throw new Error(result.message || "Failed to fetch albums");
       }
 
-      // 最初のアルバムの詳細をログ出力
-      if (result.albums && result.albums.length > 0) {
-        console.log("=== First Album Details ===");
-        console.log("Album:", result.albums[0]);
-        console.log("Main Photo:", result.albums[0].mainPhoto);
-        console.log("S3 Key:", result.albums[0].mainPhoto?.s3Key);
-        console.log("Media Type:", result.albums[0].mainPhoto?.mediaType);
-      }
-
       // 各アルバムのメイン写真URLとお気に入り情報を取得
       const albumsWithData = await Promise.all(
-        result.albums.map(async (album: Album, index: number) => {
+        result.albums.map(async (album: Album) => {
           try {
-            console.log(`=== Processing Album ${index + 1} ===`);
-            console.log("Album ID:", album.albumId);
-            console.log("S3 Key:", album.mainPhoto.s3Key);
-            console.log("Media Type:", album.mainPhoto.mediaType);
-
             // メイン写真URL取得
             try {
               const urlResult = await getUrl({ key: album.mainPhoto.s3Key });
@@ -497,6 +491,50 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
 
   return (
     <>
+      <div className="sticky top-0 z-10 bg-white/95 backdrop-blur-md border-b border-gray-200/50 px-4 py-3">
+        <div className="flex justify-center space-x-2">
+          <button
+            onClick={() => setMediaFilter("all")}
+            className={`px-4 py-2 rounded-full text-sm font-medium transition-all duration-200 ${
+              mediaFilter === "all" ? "bg-gradient-to-r from-pink-500 to-rose-500 text-white shadow-md" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+            }`}
+          >
+            すべて
+          </button>
+          <button
+            onClick={() => setMediaFilter("photo")}
+            className={`px-4 py-2 rounded-full text-sm font-medium transition-all duration-200 flex items-center space-x-1 ${
+              mediaFilter === "photo" ? "bg-gradient-to-r from-pink-500 to-rose-500 text-white shadow-md" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+            }`}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+              />
+            </svg>
+            <span>写真のみ</span>
+          </button>
+          <button
+            onClick={() => setMediaFilter("video")}
+            className={`px-4 py-2 rounded-full text-sm font-medium transition-all duration-200 flex items-center space-x-1 ${
+              mediaFilter === "video" ? "bg-gradient-to-r from-pink-500 to-rose-500 text-white shadow-md" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+            }`}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
+              />
+            </svg>
+            <span>動画のみ</span>
+          </button>
+        </div>
+      </div>
       {/* 固定ソート切り替えボタン（画面左下・1行2列） */}
       <div className="fixed bottom-4 left-4 z-40">
         <div className="bg-white rounded-lg shadow-lg border p-1 flex">
@@ -533,91 +571,101 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
           </button>
         </div>
       </div>
-
       {/* アルバム一覧表示 */}
-      <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2 mx-2 mt-2 pb-20">
-        {albums.map((album) => (
-          <div
-            key={album.albumId}
-            className="relative aspect-square bg-gray-100 rounded-2xl overflow-hidden cursor-pointer group hover:shadow-lg transition-all duration-200 hover:scale-105"
-            onClick={() => loadAlbumPhotos(album)}
-          >
-            {/* メイン画像/動画の表示 */}
-            {album.mainPhoto?.mediaType === "video" ? (
-              <video src={album.mainPhotoUrl} className="w-full h-full object-cover" muted preload="metadata" />
-            ) : (
-              <img src={album.mainPhotoUrl} alt={album.caption || "Wedding album"} className="w-full h-full object-cover" />
-            )}
+      {getFilteredAlbums().length === 0 ? (
+        <div className="text-center py-12">
+          <div className="text-6xl mb-4">📸</div>
+          <p className="text-gray-500 text-lg">
+            {mediaFilter === "all" ? "まだ写真がアップロードされていません" : mediaFilter === "photo" ? "写真がありません" : "動画がありません"}
+          </p>
+          <p className="text-gray-400 text-sm mt-2">
+            {mediaFilter === "all" ? "最初の思い出を共有してみましょう！" : "他のメディアタイプを確認してみてください"}
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2 mx-2 mt-2 pb-20">
+          {getFilteredAlbums().map((album) => (
+            <div
+              key={album.albumId}
+              className="relative aspect-square bg-gray-100 rounded-2xl overflow-hidden cursor-pointer group hover:shadow-lg transition-all duration-200 hover:scale-105"
+              onClick={() => loadAlbumPhotos(album)}
+            >
+              {/* メイン画像/動画の表示 */}
+              {album.mainPhoto?.mediaType === "video" ? (
+                <video src={album.mainPhotoUrl} className="w-full h-full object-cover" muted preload="metadata" />
+              ) : (
+                <img src={album.mainPhotoUrl} alt={album.caption || "Wedding album"} className="w-full h-full object-cover" />
+              )}
 
-            {/* 動画の場合の再生アイコン */}
-            {album.mainPhoto?.mediaType === "video" && (
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="w-12 h-12 bg-black/60 backdrop-blur-sm rounded-full flex items-center justify-center">
-                  <svg className="w-6 h-6 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M8 5v14l11-7z" />
-                  </svg>
+              {/* 動画の場合の再生アイコン */}
+              {album.mainPhoto?.mediaType === "video" && (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="w-12 h-12 bg-black/60 backdrop-blur-sm rounded-full flex items-center justify-center">
+                    <svg className="w-6 h-6 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* 複数枚表示のバッジ */}
-            {album.totalPhotos > 1 && (
-              <div className="absolute top-2 right-2">
-                <div className="bg-black/70 backdrop-blur-sm rounded-lg px-2 py-1 flex items-center space-x-1">
-                  <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012 2v2M7 7h10"
-                    />
-                  </svg>
-                  <span className="text-white text-xs font-medium">{album.totalPhotos}</span>
+              {/* 複数枚表示のバッジ */}
+              {album.totalPhotos > 1 && (
+                <div className="absolute top-2 right-2">
+                  <div className="bg-black/70 backdrop-blur-sm rounded-lg px-2 py-1 flex items-center space-x-1">
+                    <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012 2v2M7 7h10"
+                      />
+                    </svg>
+                    <span className="text-white text-xs font-medium">{album.totalPhotos}</span>
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* 自分の投稿の場合の削除済みバッジ */}
-            {isOwner(album) && album.isPublic === false && (
-              <div className="absolute top-2 right-2 ml-1">
-                <div className="bg-red-600/90 backdrop-blur-sm rounded-lg px-2 py-1 flex items-center space-x-1">
-                  <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                    />
-                  </svg>
-                  <span className="text-white text-xs font-medium">削除済み</span>
+              {/* 自分の投稿の場合の削除済みバッジ */}
+              {isOwner(album) && album.isPublic === false && (
+                <div className="absolute top-2 right-2 ml-1">
+                  <div className="bg-red-600/90 backdrop-blur-sm rounded-lg px-2 py-1 flex items-center space-x-1">
+                    <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                      />
+                    </svg>
+                    <span className="text-white text-xs font-medium">削除済み</span>
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* お気に入り件数バッジ */}
-            {album.favoriteCount !== undefined && album.favoriteCount > 0 && (
-              <div className="absolute top-2 left-2">
-                <div className="bg-red-500/90 backdrop-blur-sm rounded-lg px-2 py-1 flex items-center space-x-1">
-                  <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
-                  </svg>
-                  <span className="text-white text-xs font-medium">{album.favoriteCount}</span>
+              {/* お気に入り件数バッジ */}
+              {album.favoriteCount !== undefined && album.favoriteCount > 0 && (
+                <div className="absolute top-2 left-2">
+                  <div className="bg-red-500/90 backdrop-blur-sm rounded-lg px-2 py-1 flex items-center space-x-1">
+                    <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+                    </svg>
+                    <span className="text-white text-xs font-medium">{album.favoriteCount}</span>
+                  </div>
                 </div>
+              )}
+
+              {/* ホバー時のオーバーレイ */}
+              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-all duration-200" />
+
+              {/* 投稿者情報（常に表示） */}
+              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-3">
+                <p className="text-white text-xs font-medium truncate">{album.uploaderName || album.uploadedBy}</p>
+                {album.caption && <p className="text-white/80 text-xs truncate mt-1">{album.caption}</p>}
               </div>
-            )}
-
-            {/* ホバー時のオーバーレイ */}
-            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-all duration-200" />
-
-            {/* 投稿者情報（常に表示） */}
-            <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-3">
-              <p className="text-white text-xs font-medium truncate">{album.uploaderName || album.uploadedBy}</p>
-              {album.caption && <p className="text-white/80 text-xs truncate mt-1">{album.caption}</p>}
             </div>
-          </div>
-        ))}
-      </div>
-
+          ))}
+        </div>
+      )}
       {/* アルバム詳細表示モーダル（フルスクリーン・スクロール対応） */}
       {selectedAlbum && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 overflow-y-auto">
@@ -811,7 +859,6 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
           </div>
         </div>
       )}
-
       {/* 確認ダイアログ */}
       <ConfirmDialog isOpen={showConfirmDialog} onConfirm={handleConfirmClose} onCancel={handleCancelClose} />
     </>
