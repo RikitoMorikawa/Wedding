@@ -212,7 +212,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
 
           <label
             htmlFor="file-input"
-            className="flex flex-col items-center justify-center w-full h-24 sm:h-28 border-2 border-dashed border-pink-300 rounded-2xl cursor-pointer bg-pink-50/50 hover:bg-pink-50 transition-colors"
+            className="flex flex-col items-center justify-center w-full h-30 sm:h-28 border-2 border-dashed border-pink-300 rounded-2xl cursor-pointer bg-pink-50/50 hover:bg-pink-50 transition-colors"
           >
             <div className="flex flex-col items-center justify-center py-3">
               <svg className="w-6 h-6 sm:w-7 sm:h-7 mb-1 text-pink-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -273,7 +273,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
             value={caption}
             onChange={(e) => setCaption(e.target.value)}
             rows={3}
-            className="w-full px-4 py-3 border-2 border-gray-200 rounded-2xl focus:outline-none focus:border-pink-400 focus:ring-4 focus:ring-pink-100 transition-all duration-200 bg-gray-50/50 resize-none"
+            className="w-full px-4 py-5 border-2 border-gray-200 rounded-2xl focus:outline-none focus:border-pink-400 focus:ring-4 focus:ring-pink-100 transition-all duration-200 bg-gray-50/50 resize-none"
             placeholder={selectedFiles.length > 1 ? "このアルバムについて一言..." : "この写真について一言..."}
             disabled={uploading}
           />
