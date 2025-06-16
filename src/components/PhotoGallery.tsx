@@ -592,7 +592,49 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
             >
               {/* メイン画像/動画の表示 */}
               {album.mainPhoto?.mediaType === "video" ? (
-                <video src={album.mainPhotoUrl} className="w-full h-full object-cover" muted preload="metadata" />
+                <div className="relative w-full h-full">
+                  <video
+                    src={album.mainPhotoUrl}
+                    className="w-full h-full object-cover"
+                    muted
+                    playsInline
+                    preload="metadata"
+                    poster={album.mainPhotoUrl + "#t=0.5"} // サムネイル生成のための時間指定
+                    onLoadedMetadata={(e) => {
+                      // メタデータ読み込み後に最初のフレームを表示
+                      const video = e.target as HTMLVideoElement;
+                      video.currentTime = 0.5;
+                    }}
+                    onError={(e) => {
+                      // エラー時のフォールバック表示
+                      const video = e.target as HTMLVideoElement;
+                      const parent = video.parentElement;
+                      if (parent) {
+                        parent.innerHTML = `
+            <div class="w-full h-full bg-gray-200 flex items-center justify-center">
+              <div class="text-center">
+                <div class="w-12 h-12 bg-gray-400 rounded-full flex items-center justify-center mx-auto mb-2">
+                  <svg class="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M8 5v14l11-7z"/>
+                  </svg>
+                </div>
+                <p class="text-xs text-gray-500">動画</p>
+              </div>
+            </div>
+          `;
+                      }
+                    }}
+                  />
+
+                  {/* 動画アイコンオーバーレイ */}
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                    <div className="w-12 h-12 bg-black/60 backdrop-blur-sm rounded-full flex items-center justify-center">
+                      <svg className="w-6 h-6 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M8 5v14l11-7z" />
+                      </svg>
+                    </div>
+                  </div>
+                </div>
               ) : (
                 <img src={album.mainPhotoUrl} alt={album.caption || "Wedding album"} className="w-full h-full object-cover" />
               )}
@@ -827,16 +869,42 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
                           }`}
                         >
                           {photo.mediaType === "video" ? (
-                            <>
-                              <video src={photo.url} className="w-full h-full object-cover" muted preload="metadata" />
-                              <div className="absolute inset-0 flex items-center justify-center">
+                            <div className="relative w-full h-full">
+                              <video
+                                src={photo.url}
+                                className="w-full h-full object-cover"
+                                muted
+                                playsInline
+                                preload="metadata"
+                                poster={photo.url + "#t=0.5"}
+                                onLoadedMetadata={(e) => {
+                                  const video = e.target as HTMLVideoElement;
+                                  video.currentTime = 0.5;
+                                }}
+                                onError={(e) => {
+                                  const video = e.target as HTMLVideoElement;
+                                  const parent = video.parentElement;
+                                  if (parent) {
+                                    parent.innerHTML = `
+            <div class="w-full h-full bg-gray-200 flex items-center justify-center rounded-lg">
+              <div class="w-4 h-4 bg-black/60 rounded-full flex items-center justify-center">
+                <svg class="w-2 h-2 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M8 5v14l11-7z"/>
+                </svg>
+              </div>
+            </div>
+          `;
+                                  }
+                                }}
+                              />
+                              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                                 <div className="w-4 h-4 bg-black/60 rounded-full flex items-center justify-center">
                                   <svg className="w-2 h-2 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24">
                                     <path d="M8 5v14l11-7z" />
                                   </svg>
                                 </div>
                               </div>
-                            </>
+                            </div>
                           ) : (
                             <img src={photo.url} alt={`写真 ${index + 1}`} className="w-full h-full object-cover" />
                           )}
