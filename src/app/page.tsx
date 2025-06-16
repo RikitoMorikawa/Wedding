@@ -201,11 +201,11 @@ export default function Home() {
       </main>
 
       {/* 固定投稿エリア */}
-      <div className="fixed bottom-6 right-6 z-30 flex flex-col items-end space-y-3">
+      <div className="fixed bottom-6 right-4 z-30 flex flex-col items-end space-y-3">
         {/* メディア選択オプション（展開時のみ表示） */}
         {showMediaSelector && (
-          <div className="bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-white/50 p-2 transform transition-all duration-300 ease-out animate-in slide-in-from-bottom-2">
-            <div className="flex flex-col space-y-2">
+          <div className="bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-white/50 transform transition-all duration-300 ease-out animate-in slide-in-from-bottom-2">
+            <div className="flex flex-col pr-4">
               {/* 写真選択ボタン */}
               <button
                 onClick={() => handleMediaTypeSelect("photo")}
