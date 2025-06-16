@@ -2,7 +2,6 @@
 
 import { useState, useRef } from "react";
 import { Amplify } from "aws-amplify";
-import { uploadData } from "aws-amplify/storage";
 import { getCurrentUser } from "aws-amplify/auth";
 import { v4 as uuidv4 } from "uuid";
 import awsconfig from "../aws-exports";
@@ -15,44 +14,72 @@ Amplify.configure(awsconfig);
 interface PhotoUploadProps {
   onUploadSuccess: () => void;
   userInfo: { passcode: string; name: string } | null;
+  selectedMediaType: "photo" | "video"; // 新しいprops
 }
 
 interface SelectedFile {
   file: File;
   id: string;
   preview: string;
+  mediaType: "photo" | "video";
 }
 
 const MAX_FILES = 10;
 
-export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadProps) {
+export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaType }: PhotoUploadProps) {
   const [uploading, setUploading] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<SelectedFile[]>([]);
   const [caption, setCaption] = useState("");
-
-  // 結婚式確認ダイアログの状態
   const [showWeddingConfirm, setShowWeddingConfirm] = useState(false);
 
   const buttonRef = useRef<HTMLButtonElement>(null);
+  const API_BASE = awsconfig.aws_cloud_logic_custom[0].endpoint;
 
+  // ファイル選択処理
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || []);
-    const imageFiles = files.filter((file) => file.type.startsWith("image/"));
 
-    if (imageFiles.length === 0) {
-      alert("画像ファイルを選択してください");
+    let validFiles: File[] = [];
+
+    if (selectedMediaType === "photo") {
+      validFiles = files.filter((file) => file.type.startsWith("image/"));
+      if (validFiles.length !== files.length) {
+        alert("写真ファイルのみ選択できます");
+      }
+    } else if (selectedMediaType === "video") {
+      validFiles = files.filter((file) => file.type.startsWith("video/"));
+      if (validFiles.length !== files.length) {
+        alert("動画ファイルのみ選択できます");
+      }
+    }
+
+    if (validFiles.length === 0) {
+      alert(`${selectedMediaType === "photo" ? "画像" : "動画"}ファイルを選択してください`);
       return;
     }
 
-    if (selectedFiles.length + imageFiles.length > MAX_FILES) {
-      alert(`最大${MAX_FILES}枚まで選択できます`);
+    if (selectedFiles.length + validFiles.length > MAX_FILES) {
+      alert(`最大${MAX_FILES}個まで選択できます`);
       return;
     }
 
-    const newFiles: SelectedFile[] = imageFiles.map((file) => ({
+    // ファイルサイズチェック
+    const maxPhotoSize = 10 * 1024 * 1024; // 10MB
+    const maxVideoSize = 100 * 1024 * 1024; // 100MB
+
+    for (const file of validFiles) {
+      const maxSize = selectedMediaType === "photo" ? maxPhotoSize : maxVideoSize;
+      if (file.size > maxSize) {
+        alert(`${selectedMediaType === "photo" ? "画像" : "動画"}ファイルは${selectedMediaType === "photo" ? "10MB" : "100MB"}以下にしてください`);
+        return;
+      }
+    }
+
+    const newFiles: SelectedFile[] = validFiles.map((file) => ({
       file,
       id: uuidv4(),
       preview: URL.createObjectURL(file),
+      mediaType: selectedMediaType,
     }));
 
     setSelectedFiles((prev) => [...prev, ...newFiles]);
@@ -81,19 +108,19 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
     }
   };
 
-  // アップロードボタンクリック時（確認ダイアログを表示）
+  // アップロードボタンクリック時
   const handleUploadClick = () => {
     if (selectedFiles.length === 0) return;
     setShowWeddingConfirm(true);
   };
 
-  // 結婚式確認ダイアログで「はい」を選択
+  // 確認ダイアログで「はい」を選択
   const handleWeddingConfirm = () => {
     setShowWeddingConfirm(false);
     performUpload();
   };
 
-  // 結婚式確認ダイアログで「いいえ」を選択
+  // 確認ダイアログで「いいえ」を選択
   const handleWeddingCancel = () => {
     setShowWeddingConfirm(false);
   };
@@ -111,53 +138,62 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
       const uploadedAt = new Date().toISOString();
 
       const uploadPromises = selectedFiles.map(async (selectedFile, index) => {
-        const photoId = uuidv4();
-        const fileKey = `photos/${albumId}/${photoId}-${selectedFile.file.name}`;
+        const mediaId = uuidv4();
 
         try {
-          await uploadData({
-            key: fileKey,
-            data: selectedFile.file,
-            options: {
-              metadata: {
-                uploadedBy: user.username,
-                uploadedAt: uploadedAt,
-                photoId: photoId,
-                albumId: albumId,
-                photoIndex: index.toString(),
-              },
-            },
-          }).result;
-
-          const response = await fetch(`${awsconfig.aws_cloud_logic_custom[0].endpoint}/photos/save-album`, {
+          // 1. 署名付きURL取得
+          const urlResponse = await fetch(`${API_BASE}/photos/upload-url`, {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              photoId: photoId,
+              fileName: selectedFile.file.name,
+              fileType: selectedFile.file.type,
+              passcode: user.username,
+              mediaType: selectedFile.mediaType,
+            }),
+          });
+
+          const urlResult = await urlResponse.json();
+          if (!urlResult.success) {
+            throw new Error(urlResult.message || "Failed to get upload URL");
+          }
+
+          // 2. S3にアップロード
+          await fetch(urlResult.uploadURL, {
+            method: "PUT",
+            body: selectedFile.file,
+            headers: { "Content-Type": selectedFile.file.type },
+          });
+
+          // 3. DBに保存
+          const saveResponse = await fetch(`${API_BASE}/photos/save-album`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              photoId: mediaId,
               albumId: albumId,
               uploadedBy: user.username,
               caption: index === 0 ? caption : "",
-              s3Key: fileKey,
+              s3Key: urlResult.s3Key,
               uploaderName: userInfo.name,
               uploadedAt: uploadedAt,
               photoIndex: index,
               totalPhotos: selectedFiles.length,
               isMainPhoto: index === 0,
+              mediaType: selectedFile.mediaType,
+              fileType: selectedFile.file.type,
             }),
           });
 
-          const saveResult = await response.json();
-
+          const saveResult = await saveResponse.json();
           if (!saveResult.success) {
-            throw new Error(saveResult.message || "Failed to save photo metadata");
+            throw new Error(saveResult.message || "Failed to save media metadata");
           }
 
-          return { success: true, photoId, fileKey };
+          return { success: true, mediaId, s3Key: urlResult.s3Key };
         } catch (error) {
           console.error(`Error uploading ${selectedFile.file.name}:`, error);
-          return { success: false, error, photoId, fileKey };
+          return { success: false, error, mediaId };
         }
       });
 
@@ -167,20 +203,17 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
 
       console.log(`Upload completed: ${successCount} success, ${failureCount} failures`);
 
-      // ファイルをクリーンアップ
+      // クリーンアップ
       selectedFiles.forEach((file) => URL.revokeObjectURL(file.preview));
       setSelectedFiles([]);
       setCaption("");
       const fileInput = document.getElementById("file-input") as HTMLInputElement;
       if (fileInput) fileInput.value = "";
 
-      // 🔥 重要：アップロード完了後にモーダルを閉じる
       if (failureCount === 0) {
-        // 成功時はダイアログを表示せずに即座にモーダルを閉じる
         onUploadSuccess();
       } else {
-        // エラーがある場合のみアラートを表示してからモーダルを閉じる
-        alert(`⚠️ アップロード完了\n${successCount}枚が成功、${failureCount}枚が失敗しました`);
+        alert(`⚠️ アップロード完了\n${successCount}個が成功、${failureCount}個が失敗しました`);
         setTimeout(() => {
           onUploadSuccess();
         }, 1000);
@@ -188,7 +221,6 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
     } catch (error) {
       console.error("Upload error:", error);
       alert("❌ アップロードエラー\nアップロード中にエラーが発生しました");
-      // エラーの場合もモーダルを閉じる
       setTimeout(() => {
         onUploadSuccess();
       }, 1000);
@@ -201,30 +233,33 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
 
   return (
     <>
-      {/* モーダル内に完全に収まるレイアウト */}
       <div className="space-y-4">
         {/* ファイル選択エリア */}
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-3">
-            写真を選択 ({selectedFiles.length}/{MAX_FILES}枚)
+            {selectedMediaType === "photo" ? "写真" : "動画"}を選択 ({selectedFiles.length}/{MAX_FILES}個)
             {selectedFiles.length > 0 && <span className="text-xs text-gray-500 ml-2">({totalFileSize.toFixed(1)}MB)</span>}
           </label>
 
           <label
             htmlFor="file-input"
-            className="flex flex-col items-center justify-center w-full h-30 sm:h-28 border-2 border-dashed border-pink-300 rounded-2xl cursor-pointer bg-pink-50/50 hover:bg-pink-50 transition-colors"
+            className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-pink-300 rounded-2xl cursor-pointer bg-pink-50/50 hover:bg-pink-50 transition-colors"
           >
             <div className="flex flex-col items-center justify-center py-3">
-              <svg className="w-6 h-6 sm:w-7 sm:h-7 mb-1 text-pink-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-              </svg>
-              <p className="text-xs sm:text-sm text-pink-600 font-medium">{selectedFiles.length === 0 ? "写真をタップして選択" : "写真を追加"}</p>
-              <p className="text-xs text-gray-500">JPG, PNG, GIF（最大{MAX_FILES}枚）</p>
+              <div className="text-3xl mb-2">{selectedMediaType === "photo" ? "📷" : "🎥"}</div>
+              <p className="text-sm text-pink-600 font-medium">
+                {selectedFiles.length === 0
+                  ? `${selectedMediaType === "photo" ? "写真" : "動画"}をタップして選択`
+                  : `${selectedMediaType === "photo" ? "写真" : "動画"}を追加`}
+              </p>
+              <p className="text-xs text-gray-500 mt-1">
+                {selectedMediaType === "photo" ? "JPG, PNG, GIF, WebP（最大10MB）" : "MP4, MOV, AVI, WebM（最大100MB）"}
+              </p>
             </div>
             <input
               id="file-input"
               type="file"
-              accept="image/*"
+              accept={selectedMediaType === "photo" ? "image/*" : "video/*"}
               multiple
               onChange={handleFileSelect}
               className="hidden"
@@ -237,7 +272,9 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
         {selectedFiles.length > 0 && (
           <div className="bg-pink-50/50 rounded-2xl p-3">
             <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-semibold text-gray-700">選択中の写真 ({selectedFiles.length}枚)</h3>
+              <h3 className="text-sm font-semibold text-gray-700">
+                選択中の{selectedMediaType === "photo" ? "写真" : "動画"} ({selectedFiles.length}個)
+              </h3>
               <button onClick={removeAllFiles} className="text-xs text-red-500 hover:text-red-700 font-medium" disabled={uploading}>
                 すべて削除
               </button>
@@ -246,14 +283,21 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
               {selectedFiles.map((selectedFile, index) => (
                 <div key={selectedFile.id} className="flex items-center justify-between bg-white rounded-lg p-2">
                   <div className="flex items-center space-x-2">
-                    <div className="w-6 h-6 bg-pink-100 rounded-lg flex items-center justify-center">
-                      {index === 0 ? <span className="text-pink-600 text-xs font-bold">★</span> : <span className="text-pink-600 text-xs">{index + 1}</span>}
+                    <div className="w-8 h-8 rounded-lg overflow-hidden bg-gray-100">
+                      {selectedFile.mediaType === "photo" ? (
+                        <img src={selectedFile.preview} alt="preview" className="w-full h-full object-cover" />
+                      ) : (
+                        <video src={selectedFile.preview} className="w-full h-full object-cover" muted />
+                      )}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="text-xs font-medium text-gray-800 truncate">{selectedFile.file.name}</p>
+                      <div className="flex items-center space-x-1">
+                        {index === 0 && <span className="text-pink-600 text-xs font-bold">★</span>}
+                        <p className="text-xs font-medium text-gray-800 truncate">{selectedFile.file.name}</p>
+                      </div>
                       <p className="text-xs text-gray-500">
                         {(selectedFile.file.size / (1024 * 1024)).toFixed(1)}MB
-                        {index === 0 && <span className="ml-1 text-pink-600">（メイン写真）</span>}
+                        {index === 0 && <span className="ml-1 text-pink-600">（メイン{selectedMediaType === "photo" ? "写真" : "動画"}）</span>}
                       </p>
                     </div>
                   </div>
@@ -273,13 +317,13 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
             value={caption}
             onChange={(e) => setCaption(e.target.value)}
             rows={3}
-            className="w-full px-4 py-5 border-2 border-gray-200 rounded-2xl focus:outline-none focus:border-pink-400 focus:ring-4 focus:ring-pink-100 transition-all duration-200 bg-gray-50/50 resize-none"
-            placeholder={selectedFiles.length > 1 ? "このアルバムについて一言..." : "この写真について一言..."}
+            className="w-full px-4 py-3 border-2 border-gray-200 rounded-2xl focus:outline-none focus:border-pink-400 focus:ring-4 focus:ring-pink-100 transition-all duration-200 bg-gray-50/50 resize-none"
+            placeholder={selectedFiles.length > 1 ? "このアルバムについて一言..." : `この${selectedMediaType === "photo" ? "写真" : "動画"}について一言...`}
             disabled={uploading}
           />
         </div>
 
-        {/* アップロードボタン - モーダル内の最下部 */}
+        {/* アップロードボタン */}
         <div className="pt-3">
           <BubblyButton ref={buttonRef} onClick={handleUploadClick} disabled={selectedFiles.length === 0 || uploading}>
             {uploading ? (
@@ -290,17 +334,17 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
             ) : (
               `${
                 selectedFiles.length === 0
-                  ? "写真を選択してください"
+                  ? `${selectedMediaType === "photo" ? "写真" : "動画"}を選択してください`
                   : selectedFiles.length === 1
-                  ? "写真をアップロード"
-                  : `${selectedFiles.length}枚をアップロード`
+                  ? `${selectedMediaType === "photo" ? "写真" : "動画"}をアップロード`
+                  : `${selectedFiles.length}個をアップロード`
               }`
             )}
           </BubblyButton>
         </div>
       </div>
 
-      {/* 結婚式確認ダイアログ */}
+      {/* 確認ダイアログ */}
       <WeddingConfirmDialog isOpen={showWeddingConfirm} onConfirm={handleWeddingConfirm} onCancel={handleWeddingCancel} />
     </>
   );

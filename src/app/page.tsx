@@ -13,6 +13,9 @@ import UserRegistrationModal from "@/components/UserRegistrationModal";
 // Amplifyの設定を確実に行う
 Amplify.configure(awsconfig);
 
+// 型定義を追加
+type MediaType = "photo" | "video";
+
 interface UserInfo {
   passcode: string;
   name: string;
@@ -30,17 +33,17 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [userInfoLoading, setUserInfoLoading] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
-  const [refreshTrigger, setRefreshTrigger] = useState(0); // 写真一覧の更新用
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [showMediaSelector, setShowMediaSelector] = useState(false); // メディア選択の表示状態
+  const [selectedMediaType, setSelectedMediaType] = useState<MediaType>("photo");
 
+  // 既存の関数群（checkUser, fetchUserInfo, handleLogout等）は同じなので省略...
   const checkUser = async () => {
     console.log("=== Starting checkUser ===");
     try {
       const currentUser = await getCurrentUser();
       console.log("1. Cognito authentication check - Current user:", currentUser);
-
       setUser(currentUser);
-
-      // 2. DynamoDBでnameカラムチェック
       await fetchUserInfo(currentUser.username);
     } catch (error) {
       console.log("User not authenticated:", error);
@@ -57,26 +60,20 @@ export default function Home() {
 
   const fetchUserInfo = async (passcode: string) => {
     console.log("2. DynamoDB name column check - Starting for passcode:", passcode);
-
     if (!passcode) {
       console.error("Passcode is undefined, skipping fetch");
       return;
     }
-
     setUserInfoLoading(true);
-
     try {
       const restOperation = get({
         apiName: "weddingAPI",
         path: `/photos/user/${passcode}`,
       });
-
       const response = await restOperation.response;
       const rawData = await response.body.json();
       const data = rawData as unknown as ApiResponse;
-
       console.log("DynamoDB API Response:", data);
-
       if (data.success && data.user && data.user.name) {
         console.log("✅ User found with name:", data.user.name);
         setUserInfo(data.user);
@@ -106,13 +103,24 @@ export default function Home() {
 
   const handleUploadSuccess = () => {
     setShowUploadModal(false);
+    setShowMediaSelector(false);
     setRefreshTrigger((prev) => prev + 1);
   };
 
-  // 読み込み中
-  // 1. 初期ローディング中
+  // 投稿ボタンクリック時の処理
+  const handlePostButtonClick = () => {
+    setShowMediaSelector(!showMediaSelector);
+  };
+
+  // メディアタイプ選択時の処理
+  const handleMediaTypeSelect = (mediaType: MediaType) => {
+    setSelectedMediaType(mediaType);
+    setShowMediaSelector(false);
+    setShowUploadModal(true);
+  };
+
+  // 初期ローディング
   if (loading) {
-    console.log("3. Display: Initial loading screen");
     return (
       <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-rose-50 to-purple-50">
         <div className="text-center">
@@ -125,7 +133,7 @@ export default function Home() {
     );
   }
 
-  // 未認証（ログイン画面）
+  // 未認証
   if (!user) {
     return <CustomAuth onAuthSuccess={checkUser} />;
   }
@@ -142,7 +150,7 @@ export default function Home() {
     );
   }
 
-  // 名前未登録（ユーザー登録モーダル）
+  // 名前未登録
   if (!userInfo?.name) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-pink-50 via-white to-purple-50">
@@ -162,14 +170,14 @@ export default function Home() {
 
   // メイン画面
   return (
-    <div className="min-h-screen bg-gradient-to-br from-pink-50 via-white to-purple-50">
+    <div className="min-h-screen bg-gradient-to-br from-pink-50 via-purple-50 to-purple-50">
       {/* ヘッダー */}
       <header className="bg-white/80 backdrop-blur-md shadow-sm border-b border-pink-100 sticky top-0 z-20">
         <div className="flex items-center justify-between p-4">
           <div>
             <h1 className="text-xl font-bold bg-gradient-to-r from-pink-600 to-purple-600 bg-clip-text text-transparent">Wedding Photos</h1>
             <p className="text-sm text-gray-600">
-              こんにちは、<span className="font-medium text-pink-600">{userInfo.name}</span>さん
+              こんにちは、<span className="font-medium text-pink-600">{userInfo?.name}</span>さん
             </p>
           </div>
           <div className="flex items-center space-x-3">
@@ -188,19 +196,69 @@ export default function Home() {
       </header>
 
       {/* メインコンテンツ */}
-      <main className="pb-20">
+      <main className="pb-32">
         <PhotoGallery refreshTrigger={refreshTrigger} userInfo={userInfo} />
       </main>
 
-      {/* 固定投稿ボタン */}
-      <button
-        onClick={() => setShowUploadModal(true)}
-        className="fixed bottom-6 right-6 z-30 w-14 h-14 bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 text-white rounded-full shadow-lg hover:shadow-xl transition-all duration-200 transform hover:scale-105"
-      >
-        <svg className="w-6 h-6 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-        </svg>
-      </button>
+      {/* 固定投稿エリア */}
+      <div className="fixed bottom-6 right-6 z-30 flex flex-col items-end space-y-3">
+        {/* メディア選択オプション（展開時のみ表示） */}
+        {showMediaSelector && (
+          <div className="bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-white/50 p-2 transform transition-all duration-300 ease-out animate-in slide-in-from-bottom-2">
+            <div className="flex flex-col space-y-2">
+              {/* 写真選択ボタン */}
+              <button
+                onClick={() => handleMediaTypeSelect("photo")}
+                className="flex items-center space-x-3 p-3 rounded-xl hover:bg-pink-50 transition-colors group"
+              >
+                <div className="w-10 h-10 bg-gradient-to-r from-pink-500 to-rose-500 rounded-full flex items-center justify-center text-white group-hover:scale-110 transition-transform">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                    />
+                  </svg>
+                </div>
+                <div className="text-left">
+                  <div className="font-semibold text-gray-800">📷 写真</div>
+                  <div className="text-xs text-gray-500">JPG, PNG, GIF</div>
+                </div>
+              </button>
+
+              {/* 動画選択ボタン */}
+              <button
+                onClick={() => handleMediaTypeSelect("video")}
+                className="flex items-center space-x-3 p-3 rounded-xl hover:bg-purple-50 transition-colors group"
+              >
+                <div className="w-10 h-10 bg-gradient-to-r from-purple-500 to-indigo-500 rounded-full flex items-center justify-center text-white group-hover:scale-110 transition-transform">
+                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M17 10.5V7a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h12a1 1 0 001-1v-3.5l4 4v-11l-4 4z" />
+                  </svg>
+                </div>
+                <div className="text-left">
+                  <div className="font-semibold text-gray-800">🎥 動画</div>
+                  <div className="text-xs text-gray-500">MP4, MOV, AVI</div>
+                </div>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 投稿ボタン */}
+        <button
+          onClick={handlePostButtonClick}
+          className={`w-14 h-14 bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 text-white rounded-full shadow-lg hover:shadow-xl transition-all duration-200 transform hover:scale-105 ${
+            showMediaSelector ? "rotate-45" : ""
+          }`}
+          title="投稿する"
+        >
+          <svg className="w-6 h-6 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          </svg>
+        </button>
+      </div>
 
       {/* アップロードモーダル */}
       {showUploadModal && (
@@ -209,8 +267,19 @@ export default function Home() {
             {/* ヘッダー - 固定 */}
             <div className="flex-shrink-0 p-6 pb-4">
               <div className="flex items-center justify-between">
-                <h2 className="text-xl font-bold bg-gradient-to-r from-pink-600 to-purple-600 bg-clip-text text-transparent">写真をアップロード</h2>
-                <button onClick={() => setShowUploadModal(false)} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
+                <div className="flex items-center space-x-2">
+                  <span className="text-2xl">{selectedMediaType === "photo" ? "📷" : "🎥"}</span>
+                  <h2 className="text-xl font-bold bg-gradient-to-r from-pink-600 to-purple-600 bg-clip-text text-transparent">
+                    {selectedMediaType === "photo" ? "写真" : "動画"}をアップロード
+                  </h2>
+                </div>
+                <button
+                  onClick={() => {
+                    setShowUploadModal(false);
+                    setShowMediaSelector(false);
+                  }}
+                  className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+                >
                   <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                   </svg>
@@ -218,9 +287,9 @@ export default function Home() {
               </div>
             </div>
 
-            {/* コンテンツエリア - スクロール可能、完全固定高さ */}
+            {/* コンテンツエリア - スクロール可能 */}
             <div className="flex-1 min-h-0 px-6 pb-6 overflow-y-auto">
-              <PhotoUpload onUploadSuccess={handleUploadSuccess} userInfo={userInfo} />
+              <PhotoUpload onUploadSuccess={handleUploadSuccess} userInfo={userInfo} selectedMediaType={selectedMediaType} />
             </div>
           </div>
         </div>

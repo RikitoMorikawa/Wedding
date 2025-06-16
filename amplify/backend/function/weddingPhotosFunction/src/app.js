@@ -9,6 +9,10 @@ const app = express();
 app.use(bodyParser.json());
 app.use(awsServerlessExpressMiddleware.eventContext());
 
+// 1. 必要なライブラリを追加（ファイルの上部に追加）
+const AWS = require('aws-sdk');
+const s3 = new AWS.S3();
+
 // Enable CORS for all methods
 app.use(function (req, res, next) {
   res.header("Access-Control-Allow-Origin", "*");
@@ -482,6 +486,7 @@ app.get("/favorites/check/:userId/:targetType/:targetId", async function (req, r
 });
 
 // 写真アルバム保存エンドポイント
+// 2. 写真アルバム保存エンドポイントを動画対応に修正
 app.post("/photos/save-album", async function (req, res) {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Headers", "*");
@@ -497,7 +502,9 @@ app.post("/photos/save-album", async function (req, res) {
       uploadedAt,
       photoIndex,
       totalPhotos,
-      isMainPhoto
+      isMainPhoto,
+      mediaType, // 追加
+      fileType   // 追加
     } = req.body;
 
     if (!photoId || !uploadedBy || !s3Key) {
@@ -511,7 +518,7 @@ app.post("/photos/save-album", async function (req, res) {
       TableName: process.env.STORAGE_PHOTOS_NAME,
       Item: {
         photoId: photoId,
-        albumId: albumId || photoId, // albumIdがない場合はphotoIdを使用
+        albumId: albumId || photoId,
         uploadedBy: uploadedBy,
         uploaderName: uploaderName,
         caption: caption || "",
@@ -519,7 +526,9 @@ app.post("/photos/save-album", async function (req, res) {
         uploadedAt: uploadedAt,
         photoIndex: photoIndex || 0,
         totalPhotos: totalPhotos || 1,
-        isMainPhoto: isMainPhoto || false
+        isMainPhoto: isMainPhoto || false,
+        mediaType: mediaType || 'photo', // 追加
+        fileType: fileType || 'image/jpeg' // 追加
       }
     });
 
@@ -527,15 +536,158 @@ app.post("/photos/save-album", async function (req, res) {
 
     res.json({
       success: true,
-      message: "Photo saved successfully",
-      photoId: photoId
+      message: "Media saved successfully",
+      photoId: photoId,
+      mediaType: mediaType || 'photo'
     });
 
   } catch (error) {
-    console.error("Error saving photo:", error);
+    console.error("Error saving media:", error);
     res.status(500).json({
       success: false,
       error: error.message
+    });
+  }
+});
+
+// 写真・動画アップロード用の署名付きURL生成
+app.post("/photos/upload-url", async function (req, res) {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "*");
+
+  try {
+    const { fileName, fileType, passcode, mediaType = 'photo' } = req.body;
+
+    if (!fileName || !fileType || !passcode) {
+      return res.status(400).json({
+        success: false,
+        message: "fileName, fileType, and passcode are required",
+      });
+    }
+
+    // ファイルタイプの検証
+    const allowedPhotoTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+    const allowedVideoTypes = ['video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/webm'];
+    const allAllowedTypes = [...allowedPhotoTypes, ...allowedVideoTypes];
+
+    if (!allAllowedTypes.includes(fileType)) {
+      return res.status(400).json({
+        success: false,
+        message: "Unsupported file type",
+      });
+    }
+
+    // ファイルサイズ制限
+    const maxPhotoSize = 10 * 1024 * 1024; // 10MB
+    const maxVideoSize = 100 * 1024 * 1024; // 100MB
+    const isVideo = allowedVideoTypes.includes(fileType);
+    const maxSize = isVideo ? maxVideoSize : maxPhotoSize;
+
+    // S3 署名付きURL生成（publicプレフィックスなし）
+    const s3Key = `${isVideo ? 'videos' : 'photos'}/${Date.now()}_${fileName}`;
+    const s3Params = {
+      Bucket: process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME,
+      Key: `public/${s3Key}`, // S3アップロード用にはpublicを付ける
+      ContentType: fileType,
+      Expires: 300, // 5分
+    };
+
+    const uploadURL = s3.getSignedUrl('putObject', s3Params);
+
+    res.json({
+      success: true,
+      uploadURL: uploadURL,
+      s3Key: s3Key, // DynamoDBにはpublicプレフィックスなしで保存
+      mediaType: isVideo ? 'video' : 'photo'
+    });
+
+  } catch (error) {
+    console.error("Error creating upload URL:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// 写真・動画一覧取得（メディアタイプフィルタ付き）
+app.get("/photos/media", async function (req, res) {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "*");
+  
+  try {
+    const { mediaType, passcode } = req.query; // 'photo', 'video', または未指定（全て）
+
+    let filterExpression = "isPublic <> :false";
+    let expressionAttributeValues = {
+      ":false": false
+    };
+
+    // mediaType でフィルタリング
+    if (mediaType && (mediaType === 'photo' || mediaType === 'video')) {
+      filterExpression += " AND mediaType = :mediaType";
+      expressionAttributeValues[":mediaType"] = mediaType;
+    }
+
+    // 特定ユーザーの場合は非公開も含む
+    if (passcode) {
+      filterExpression = "(isPublic <> :false OR uploadedBy = :passcode)";
+      expressionAttributeValues[":passcode"] = passcode;
+      
+      if (mediaType) {
+        filterExpression += " AND mediaType = :mediaType";
+      }
+    }
+
+    const command = new ScanCommand({
+      TableName: process.env.STORAGE_PHOTOS_NAME,
+      FilterExpression: filterExpression,
+      ExpressionAttributeValues: expressionAttributeValues,
+    });
+
+    const result = await docClient.send(command);
+    const allItems = result.Items || [];
+
+    // S3 署名付きURL を生成
+    const itemsWithUrls = await Promise.all(
+      allItems.map(async (item) => {
+        try {
+          const getParams = {
+            Bucket: process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME,
+            Key: item.s3Key,
+            Expires: 3600, // 1時間
+          };
+
+          const url = s3.getSignedUrl('getObject', getParams);
+
+          return {
+            ...item,
+            url: url,
+          };
+        } catch (error) {
+          console.error(`Error generating URL for item ${item.photoId}:`, error);
+          return {
+            ...item,
+            url: null,
+          };
+        }
+      })
+    );
+
+    // 新しい順にソート
+    itemsWithUrls.sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt));
+
+    res.json({
+      success: true,
+      items: itemsWithUrls,
+      count: itemsWithUrls.length,
+    });
+
+  } catch (error) {
+    console.error("Error getting media:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
     });
   }
 });

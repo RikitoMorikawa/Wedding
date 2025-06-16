@@ -18,6 +18,8 @@ interface Photo {
   s3Key: string;
   photoIndex: number;
   url?: string;
+  mediaType?: "photo" | "video";
+  fileType?: string;
 }
 
 interface Album {
@@ -32,7 +34,8 @@ interface Album {
   mainPhotoUrl?: string;
   favoriteCount?: number;
   isFavorite?: boolean;
-  isPublic?: boolean; // 公開/非公開状態を追加
+  isPublic?: boolean;
+  mediaType?: "photo" | "video";
 }
 
 interface PhotoGalleryProps {
@@ -265,6 +268,8 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
   };
 
   // アルバム一覧を取得（お気に入り情報付き・エラーハンドリング強化）
+  // PhotoGallery.tsx の fetchAlbums 関数を以下に置き換えてください
+
   const fetchAlbums = async () => {
     try {
       setLoading(true);
@@ -273,32 +278,69 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
       const response = await fetch(`${API_BASE}/photos/albums`);
       const result = await response.json();
 
+      console.log("=== DEBUG: API Response ===");
+      console.log("API URL:", `${API_BASE}/photos/albums`);
+      console.log("Response:", result);
+      console.log("Albums count:", result.albums?.length || 0);
+
       if (!result.success) {
         throw new Error(result.message || "Failed to fetch albums");
       }
 
+      // 最初のアルバムの詳細をログ出力
+      if (result.albums && result.albums.length > 0) {
+        console.log("=== First Album Details ===");
+        console.log("Album:", result.albums[0]);
+        console.log("Main Photo:", result.albums[0].mainPhoto);
+        console.log("S3 Key:", result.albums[0].mainPhoto?.s3Key);
+        console.log("Media Type:", result.albums[0].mainPhoto?.mediaType);
+      }
+
       // 各アルバムのメイン写真URLとお気に入り情報を取得
       const albumsWithData = await Promise.all(
-        result.albums.map(async (album: Album) => {
+        result.albums.map(async (album: Album, index: number) => {
           try {
+            console.log(`=== Processing Album ${index + 1} ===`);
+            console.log("Album ID:", album.albumId);
+            console.log("S3 Key:", album.mainPhoto.s3Key);
+            console.log("Media Type:", album.mainPhoto.mediaType);
+
             // メイン写真URL取得
-            const urlResult = await getUrl({ key: album.mainPhoto.s3Key });
+            try {
+              const urlResult = await getUrl({ key: album.mainPhoto.s3Key });
+              console.log("Generated URL:", urlResult.url.toString());
 
-            // お気に入り情報を並列取得（エラーが発生しても他の処理を続行）
-            const [favoriteCount, isFavorite] = await Promise.allSettled([
-              fetchFavoriteCount("album", album.albumId),
-              checkFavoriteStatus("album", album.albumId),
-            ]);
+              // お気に入り情報を並列取得（エラーが発生しても他の処理を続行）
+              const [favoriteCount, isFavorite] = await Promise.allSettled([
+                fetchFavoriteCount("album", album.albumId),
+                checkFavoriteStatus("album", album.albumId),
+              ]);
 
-            return {
-              ...album,
-              mainPhotoUrl: urlResult.url.toString(),
-              favoriteCount: favoriteCount.status === "fulfilled" ? favoriteCount.value : 0,
-              isFavorite: isFavorite.status === "fulfilled" ? isFavorite.value : false,
-              isPublic: album.isPublic !== false, // デフォルトは公開（既存データ互換性）
-            };
+              const processedAlbum = {
+                ...album,
+                mainPhotoUrl: urlResult.url.toString(),
+                favoriteCount: favoriteCount.status === "fulfilled" ? favoriteCount.value : 0,
+                isFavorite: isFavorite.status === "fulfilled" ? isFavorite.value : false,
+                isPublic: album.isPublic !== false, // デフォルトは公開（既存データ互換性）
+              };
+
+              console.log("✅ Successfully processed album:", processedAlbum.albumId);
+              return processedAlbum;
+            } catch (urlError) {
+              console.error(`❌ Error generating URL for album ${album.albumId}:`, urlError);
+              console.error("S3 Key that failed:", album.mainPhoto.s3Key);
+
+              // URL生成に失敗したアルバムはundefinedのmainPhotoUrlを持つ
+              return {
+                ...album,
+                mainPhotoUrl: undefined,
+                favoriteCount: 0,
+                isFavorite: false,
+                isPublic: true, // デフォルトは公開
+              };
+            }
           } catch (error) {
-            console.error("Error getting album data for", album.albumId, ":", error);
+            console.error("❌ Error getting album data for", album.albumId, ":", error);
             return {
               ...album,
               mainPhotoUrl: undefined,
@@ -310,14 +352,28 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
         })
       );
 
+      // 失敗したアルバムの詳細をログ出力
+      const failedAlbums = albumsWithData.filter((album) => !album.mainPhotoUrl);
+      if (failedAlbums.length > 0) {
+        console.log(
+          "❌ Failed albums:",
+          failedAlbums.map((album) => ({
+            albumId: album.albumId,
+            s3Key: album.mainPhoto?.s3Key,
+            mediaType: album.mainPhoto?.mediaType,
+          }))
+        );
+      }
+
       // メイン写真URLが取得できたアルバムのみを表示
       const validAlbums = albumsWithData.filter((album) => album.mainPhotoUrl);
 
       // ソート適用
       const sortedAlbums = sortAlbums(validAlbums, sortType);
+      console.log("📋 Final albums to display:", sortedAlbums.length);
       setAlbums(sortedAlbums);
     } catch (error) {
-      console.error("Error fetching albums:", error);
+      console.error("❌ Error fetching albums:", error);
     } finally {
       setLoading(false);
     }
@@ -486,7 +542,23 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
             className="relative aspect-square bg-gray-100 rounded-2xl overflow-hidden cursor-pointer group hover:shadow-lg transition-all duration-200 hover:scale-105"
             onClick={() => loadAlbumPhotos(album)}
           >
-            <img src={album.mainPhotoUrl} alt={album.caption || "Wedding album"} className="w-full h-full object-cover" />
+            {/* メイン画像/動画の表示 */}
+            {album.mainPhoto?.mediaType === "video" ? (
+              <video src={album.mainPhotoUrl} className="w-full h-full object-cover" muted preload="metadata" />
+            ) : (
+              <img src={album.mainPhotoUrl} alt={album.caption || "Wedding album"} className="w-full h-full object-cover" />
+            )}
+
+            {/* 動画の場合の再生アイコン */}
+            {album.mainPhoto?.mediaType === "video" && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="w-12 h-12 bg-black/60 backdrop-blur-sm rounded-full flex items-center justify-center">
+                  <svg className="w-6 h-6 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M8 5v14l11-7z" />
+                  </svg>
+                </div>
+              </div>
+            )}
 
             {/* 複数枚表示のバッジ */}
             {album.totalPhotos > 1 && (
@@ -650,11 +722,21 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
             <div className="relative px-4 py-2 flex items-center justify-center">
               {/* メイン写真 */}
               <div className="relative max-w-full">
-                <img
-                  src={selectedAlbum.photos[currentPhotoIndex]?.url}
-                  alt={selectedAlbum.caption || "Wedding photo"}
-                  className="max-w-full max-h-[80vh] object-contain mx-auto"
-                />
+                {selectedAlbum.photos[currentPhotoIndex]?.mediaType === "video" ? (
+                  <video
+                    src={selectedAlbum.photos[currentPhotoIndex]?.url}
+                    className="max-w-full max-h-[80vh] object-contain mx-auto"
+                    controls
+                    autoPlay
+                    muted
+                  />
+                ) : (
+                  <img
+                    src={selectedAlbum.photos[currentPhotoIndex]?.url}
+                    alt={selectedAlbum.caption || "Wedding photo"}
+                    className="max-w-full max-h-[80vh] object-contain mx-auto"
+                  />
+                )}
 
                 {/* 前の写真ボタン */}
                 {selectedAlbum.totalPhotos > 1 && currentPhotoIndex > 0 && (
@@ -692,11 +774,24 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
                         <button
                           key={photo.photoId}
                           onClick={() => goToPhoto(index)}
-                          className={`flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 transition-all ${
+                          className={`relative flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 transition-all ${
                             currentPhotoIndex === index ? "border-pink-400 scale-110 shadow-lg" : "border-white/30 hover:border-white/60 hover:scale-105"
                           }`}
                         >
-                          <img src={photo.url} alt={`写真 ${index + 1}`} className="w-full h-full object-cover" />
+                          {photo.mediaType === "video" ? (
+                            <>
+                              <video src={photo.url} className="w-full h-full object-cover" muted preload="metadata" />
+                              <div className="absolute inset-0 flex items-center justify-center">
+                                <div className="w-4 h-4 bg-black/60 rounded-full flex items-center justify-center">
+                                  <svg className="w-2 h-2 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+                                    <path d="M8 5v14l11-7z" />
+                                  </svg>
+                                </div>
+                              </div>
+                            </>
+                          ) : (
+                            <img src={photo.url} alt={`写真 ${index + 1}`} className="w-full h-full object-cover" />
+                          )}
                         </button>
                       ))}
                     </div>
