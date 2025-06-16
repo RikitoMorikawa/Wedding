@@ -479,7 +479,7 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
       </div>
 
       {/* アルバム一覧表示 */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 mx-2 mt-2 pb-20">
+      <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2 mx-2 mt-2 pb-20">
         {albums.map((album) => (
           <div
             key={album.albumId}
