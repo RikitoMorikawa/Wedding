@@ -599,14 +599,28 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
                     muted
                     playsInline
                     preload="metadata"
-                    poster={album.mainPhotoUrl + "#t=0.5"} // サムネイル生成のための時間指定
+                    poster={album.mainPhotoUrl + "#t=0.1"}
                     onLoadedMetadata={(e) => {
-                      // メタデータ読み込み後に最初のフレームを表示
                       const video = e.target as HTMLVideoElement;
-                      video.currentTime = 0.5;
+                      video.currentTime = 0.1;
+                      video.pause(); // 強制停止
+                    }}
+                    onTimeUpdate={(e) => {
+                      const video = e.target as HTMLVideoElement;
+                      // 0.1秒を超えたら強制的に停止
+                      if (video.currentTime > 0.1) {
+                        video.currentTime = 0.1;
+                        video.pause();
+                      }
+                    }}
+                    onPlay={(e) => {
+                      // 再生されそうになったら即座に停止
+                      const video = e.target as HTMLVideoElement;
+                      video.pause();
+                      video.currentTime = 0.1;
                     }}
                     onError={(e) => {
-                      // エラー時のフォールバック表示
+                      // エラー時のフォールバック
                       const video = e.target as HTMLVideoElement;
                       const parent = video.parentElement;
                       if (parent) {
@@ -637,17 +651,6 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
                 </div>
               ) : (
                 <img src={album.mainPhotoUrl} alt={album.caption || "Wedding album"} className="w-full h-full object-cover" />
-              )}
-
-              {/* 動画の場合の再生アイコン */}
-              {album.mainPhoto?.mediaType === "video" && (
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="w-12 h-12 bg-black/60 backdrop-blur-sm rounded-full flex items-center justify-center">
-                    <svg className="w-6 h-6 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M8 5v14l11-7z" />
-                    </svg>
-                  </div>
-                </div>
               )}
 
               {/* 複数枚表示のバッジ */}
@@ -876,10 +879,10 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
                                 muted
                                 playsInline
                                 preload="metadata"
-                                poster={photo.url + "#t=0.5"}
+                                poster={photo.url + "#t=0.1"}
                                 onLoadedMetadata={(e) => {
                                   const video = e.target as HTMLVideoElement;
-                                  video.currentTime = 0.5;
+                                  video.currentTime = 0.1;
                                 }}
                                 onError={(e) => {
                                   const video = e.target as HTMLVideoElement;
@@ -888,7 +891,7 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
                                     parent.innerHTML = `
             <div class="w-full h-full bg-gray-200 flex items-center justify-center rounded-lg">
               <div class="w-4 h-4 bg-black/60 rounded-full flex items-center justify-center">
-                <svg class="w-2 h-2 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+                <svg class="w-2 h-2 text-white ml-0.1" fill="currentColor" viewBox="0 0 24 24">
                   <path d="M8 5v14l11-7z"/>
                 </svg>
               </div>
@@ -899,7 +902,7 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
                               />
                               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                                 <div className="w-4 h-4 bg-black/60 rounded-full flex items-center justify-center">
-                                  <svg className="w-2 h-2 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+                                  <svg className="w-2 h-2 text-white ml-0.1" fill="currentColor" viewBox="0 0 24 24">
                                     <path d="M8 5v14l11-7z" />
                                   </svg>
                                 </div>
