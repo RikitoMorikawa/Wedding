@@ -204,8 +204,8 @@ export default function Home() {
 
       {/* アップロードモーダル */}
       {showUploadModal && (
-        <div className="fixed inset-0 bg-black/20 backdrop-blur-sm flex items-start justify-center z-50 p-4 pt-8 pb-8">
-          <div className="bg-white/95 backdrop-blur-md rounded-2xl w-full max-w-md shadow-2xl border border-white/30 my-auto max-h-[calc(100vh-4rem)] flex flex-col">
+        <div className="fixed inset-0 bg-black/20 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white/95 backdrop-blur-md rounded-2xl w-full max-w-md shadow-2xl border border-white/30 h-[80vh] flex flex-col">
             {/* ヘッダー - 固定 */}
             <div className="flex-shrink-0 p-6 pb-4">
               <div className="flex items-center justify-between">
@@ -218,7 +218,7 @@ export default function Home() {
               </div>
             </div>
 
-            {/* コンテンツエリア - スクロール可能 */}
+            {/* コンテンツエリア - スクロール可能、完全固定高さ */}
             <div className="flex-1 min-h-0 px-6 pb-6 overflow-y-auto">
               <PhotoUpload onUploadSuccess={handleUploadSuccess} userInfo={userInfo} />
             </div>

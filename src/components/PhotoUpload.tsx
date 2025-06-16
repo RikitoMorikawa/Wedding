@@ -280,12 +280,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo }: PhotoUploadPr
         </div>
 
         {/* アップロードボタン - モーダル内の最下部 */}
-        <div
-          className="pt-3"
-          style={{
-            paddingBottom: "max(env(safe-area-inset-bottom), 20px)",
-          }}
-        >
+        <div className="py-3">
           <BubblyButton ref={buttonRef} onClick={handleUploadClick} disabled={selectedFiles.length === 0 || uploading}>
             {uploading ? (
               <div className="flex items-center justify-center space-x-2">
