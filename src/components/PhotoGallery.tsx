@@ -582,7 +582,7 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
       console.error("❌ アルバム読み込みエラー:", error);
       setLoading(false);
     }
-  }, [API_BASE, sortType, sortAlbums, userInfo?.passcode]);
+  }, [API_BASE, sortAlbums, userInfo?.passcode]);
 
   // アルバム写真を読み込み（メモ化）
   // ===============================================
@@ -899,9 +899,18 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
     setCurrentPhotoIndex(index);
   }, []);
 
-  const handleSortChange = useCallback((newSortType: SortType) => {
-    setSortType(newSortType);
-  }, []);
+  // ✅ 修正後：クライアントサイドでソート
+  const handleSortChange = useCallback(
+    (newSortType: SortType) => {
+      setSortType(newSortType);
+
+      // 既存のalbumsをソート
+      setAlbums((prevAlbums) => {
+        return sortAlbums(prevAlbums, newSortType);
+      });
+    },
+    [sortAlbums]
+  );
 
   const handleCloseModal = useCallback(() => {
     if (selectedAlbum && selectedAlbum.isPublic === false && isOwner(selectedAlbum)) {
