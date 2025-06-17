@@ -116,7 +116,17 @@ app.post("/photos/user", async function (req, res) {
  * バッチアップロード機能 *
  **********************/
 
-// ✅ バッチ署名付きURL生成
+// amplify/backend/function/weddingPhotosFunction/src/app.js
+// バッチ署名付きURL生成（バランス型設定）
+
+// ✅ バランス型設定
+const MAX_PHOTO_FILES = 20;
+const MAX_VIDEO_FILES = 3;   // 5 → 3に変更
+const MAX_TOTAL_SIZE = 500 * 1024 * 1024; // 500MB
+const MAX_PHOTO_SIZE = 50 * 1024 * 1024;  // 50MB（8MB → 50MB）
+const MAX_VIDEO_SIZE = 200 * 1024 * 1024; // 200MB（50MB → 200MB）
+
+// ✅ 更新: バッチ署名付きURL生成（バランス型設定）
 app.post("/photos/batch-upload-urls", async function (req, res) {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Headers", "*");
@@ -138,18 +148,50 @@ app.post("/photos/batch-upload-urls", async function (req, res) {
       });
     }
 
-    // ファイル数制限チェック
-    if (files.length > 20) {
+    // ✅ メディアタイプ別ファイル数制限チェック
+    const photoFiles = files.filter(file => {
+      const allowedPhotoTypes = ["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"];
+      return allowedPhotoTypes.includes(file.fileType);
+    });
+
+    const videoFiles = files.filter(file => {
+      const allowedVideoTypes = ["video/mp4", "video/quicktime", "video/x-msvideo", "video/webm"];
+      return allowedVideoTypes.includes(file.fileType);
+    });
+
+    // 写真枚数チェック
+    if (photoFiles.length > MAX_PHOTO_FILES) {
       return res.status(400).json({
         success: false,
-        message: "Maximum 20 files allowed",
+        message: `写真は最大${MAX_PHOTO_FILES}個まででです。現在: ${photoFiles.length}個`,
+        errorCode: "TOO_MANY_PHOTOS",
+        maxPhotos: MAX_PHOTO_FILES,
+        currentPhotos: photoFiles.length,
       });
     }
 
-    // 合計サイズチェック（100MB制限）
-    const MAX_TOTAL_SIZE = 100 * 1024 * 1024; // 100MB
+    // ✅ 動画枚数チェック（3個制限）
+    if (videoFiles.length > MAX_VIDEO_FILES) {
+      return res.status(400).json({
+        success: false,
+        message: `動画は最大${MAX_VIDEO_FILES}個まで（約1-2分の動画対応）です。現在: ${videoFiles.length}個`,
+        errorCode: "TOO_MANY_VIDEOS",
+        maxVideos: MAX_VIDEO_FILES,
+        currentVideos: videoFiles.length,
+      });
+    }
+
+    // 合計ファイル数チェック
+    if (files.length > Math.max(MAX_PHOTO_FILES, MAX_VIDEO_FILES)) {
+      return res.status(400).json({
+        success: false,
+        message: `合計ファイル数が制限を超えています`,
+        errorCode: "TOO_MANY_FILES",
+      });
+    }
+
+    // 合計サイズチェック
     let totalSize = 0;
-    
     for (const file of files) {
       totalSize += file.size || 0;
     }
@@ -157,7 +199,10 @@ app.post("/photos/batch-upload-urls", async function (req, res) {
     if (totalSize > MAX_TOTAL_SIZE) {
       return res.status(400).json({
         success: false,
-        message: `Total file size exceeds 100MB limit. Current: ${(totalSize / (1024 * 1024)).toFixed(1)}MB`,
+        message: `合計ファイルサイズが制限を超えています。制限: ${(MAX_TOTAL_SIZE / (1024 * 1024)).toFixed(0)}MB、現在: ${(totalSize / (1024 * 1024)).toFixed(1)}MB`,
+        errorCode: "TOTAL_SIZE_EXCEEDED",
+        maxTotalSizeMB: Math.floor(MAX_TOTAL_SIZE / (1024 * 1024)),
+        currentTotalSizeMB: parseFloat((totalSize / (1024 * 1024)).toFixed(1)),
       });
     }
 
@@ -174,18 +219,29 @@ app.post("/photos/batch-upload-urls", async function (req, res) {
       if (!allAllowedTypes.includes(file.fileType)) {
         return res.status(400).json({
           success: false,
-          message: `Unsupported file type: ${file.fileType}`,
+          message: `サポートされていないファイル形式です: ${file.fileType}`,
+          errorCode: "UNSUPPORTED_FILE_TYPE",
+          fileName: file.fileName,
+          fileType: file.fileType,
         });
       }
 
-      // 個別ファイルサイズチェック
+      // ✅ 個別ファイルサイズチェック（バランス型設定）
       const isVideo = allowedVideoTypes.includes(file.fileType);
-      const maxSize = isVideo ? 50 * 1024 * 1024 : 8 * 1024 * 1024; // 50MB for video, 8MB for photo
+      const maxSize = isVideo ? MAX_VIDEO_SIZE : MAX_PHOTO_SIZE;
+      const mediaType = isVideo ? "動画" : "写真";
+      const maxSizeText = isVideo ? "200MB" : "50MB";
+      const description = isVideo ? "（約1-2分対応）" : "（プロ撮影対応）";
       
       if (file.size > maxSize) {
         return res.status(400).json({
           success: false,
-          message: `File ${file.fileName} exceeds size limit (${isVideo ? '50MB' : '8MB'})`,
+          message: `${mediaType}ファイル「${file.fileName}」のサイズが制限を超えています。制限: ${maxSizeText}${description}、現在: ${(file.size / (1024 * 1024)).toFixed(1)}MB`,
+          errorCode: "FILE_SIZE_EXCEEDED",
+          fileName: file.fileName,
+          maxSizeMB: Math.floor(maxSize / (1024 * 1024)),
+          currentSizeMB: parseFloat((file.size / (1024 * 1024)).toFixed(1)),
+          mediaType: isVideo ? "video" : "photo",
         });
       }
 
@@ -197,7 +253,7 @@ app.post("/photos/batch-upload-urls", async function (req, res) {
         Bucket: process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME,
         Key: `public/${s3Key}`,
         ContentType: file.fileType,
-        Expires: 600, // 10分（バッチ処理のため延長）
+        Expires: 600, // 10分
       };
 
       const uploadURL = s3.getSignedUrl("putObject", s3Params);
@@ -217,8 +273,17 @@ app.post("/photos/batch-upload-urls", async function (req, res) {
       success: true,
       uploadUrls: uploadUrls,
       totalFiles: files.length,
+      photoFiles: photoFiles.length,
+      videoFiles: videoFiles.length,
       totalSize: totalSize,
-      expiresIn: 600, // 10分
+      expiresIn: 600,
+      limits: {
+        maxPhotos: MAX_PHOTO_FILES,
+        maxVideos: MAX_VIDEO_FILES,
+        maxPhotoSizeMB: Math.floor(MAX_PHOTO_SIZE / (1024 * 1024)),
+        maxVideoSizeMB: Math.floor(MAX_VIDEO_SIZE / (1024 * 1024)),
+        maxTotalSizeMB: Math.floor(MAX_TOTAL_SIZE / (1024 * 1024)),
+      },
     });
 
   } catch (error) {
@@ -226,11 +291,12 @@ app.post("/photos/batch-upload-urls", async function (req, res) {
     res.status(500).json({
       success: false,
       error: error.message,
+      errorCode: "INTERNAL_SERVER_ERROR",
     });
   }
 });
 
-// ✅ バッチアルバム保存（トランザクション対応）
+// ✅ 更新: バッチアルバム保存（バランス型設定）
 app.post("/photos/batch-save-album", async function (req, res) {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Headers", "*");
@@ -250,21 +316,40 @@ app.post("/photos/batch-save-album", async function (req, res) {
     if (!albumId || !uploadedBy || !uploaderName || !files || !Array.isArray(files)) {
       return res.status(400).json({
         success: false,
-        message: "Missing required fields: albumId, uploadedBy, uploaderName, files",
+        message: "必須フィールドが不足しています: albumId, uploadedBy, uploaderName, files",
+        errorCode: "MISSING_REQUIRED_FIELDS",
       });
     }
 
     if (files.length === 0) {
       return res.status(400).json({
         success: false,
-        message: "files array cannot be empty",
+        message: "ファイル配列が空です",
+        errorCode: "EMPTY_FILES_ARRAY",
       });
     }
 
-    if (files.length > 20) {
+    // ✅ サーバーサイドでも制限を再チェック（バランス型設定）
+    const photoFiles = files.filter(file => file.mediaType === "photo");
+    const videoFiles = files.filter(file => file.mediaType === "video");
+
+    if (photoFiles.length > MAX_PHOTO_FILES) {
       return res.status(400).json({
         success: false,
-        message: "Maximum 20 files allowed",
+        message: `写真は最大${MAX_PHOTO_FILES}個まででです`,
+        errorCode: "TOO_MANY_PHOTOS",
+        maxPhotos: MAX_PHOTO_FILES,
+        currentPhotos: photoFiles.length,
+      });
+    }
+
+    if (videoFiles.length > MAX_VIDEO_FILES) {
+      return res.status(400).json({
+        success: false,
+        message: `動画は最大${MAX_VIDEO_FILES}個まで（約1-2分の動画対応）です`,
+        errorCode: "TOO_MANY_VIDEOS",
+        maxVideos: MAX_VIDEO_FILES,
+        currentVideos: videoFiles.length,
       });
     }
 
@@ -278,7 +363,8 @@ app.post("/photos/batch-save-album", async function (req, res) {
     if (!userResult.Item) {
       return res.status(403).json({
         success: false,
-        message: "Invalid user",
+        message: "無効なユーザーです",
+        errorCode: "INVALID_USER",
       });
     }
 
@@ -292,7 +378,6 @@ app.post("/photos/batch-save-album", async function (req, res) {
     }
 
     const savedFiles = [];
-    const failedFiles = [];
 
     try {
       // バッチごとにトランザクション実行
@@ -342,7 +427,8 @@ app.post("/photos/batch-save-album", async function (req, res) {
           savedFiles.push({
             photoId: file.photoId,
             s3Key: file.s3Key,
-            fileName: file.fileName
+            fileName: file.fileName,
+            mediaType: file.mediaType
           });
         });
 
@@ -357,12 +443,19 @@ app.post("/photos/batch-save-album", async function (req, res) {
       // 全バッチ成功
       res.json({
         success: true,
-        message: `Album saved successfully with ${files.length} files`,
+        message: `アルバムが正常に保存されました（写真${photoFiles.length}個、動画${videoFiles.length}個）`,
         albumId: albumId,
         totalFiles: files.length,
+        photoFiles: photoFiles.length,
+        videoFiles: videoFiles.length,
         savedFiles: savedFiles.length,
-        failedFiles: failedFiles.length,
         batches: batches.length,
+        limits: {
+          maxPhotos: MAX_PHOTO_FILES,
+          maxVideos: MAX_VIDEO_FILES,
+          currentPhotos: photoFiles.length,
+          currentVideos: videoFiles.length,
+        },
       });
 
     } catch (transactionError) {
@@ -388,21 +481,22 @@ app.post("/photos/batch-save-album", async function (req, res) {
       if (transactionError.name === 'ConditionalCheckFailedException') {
         res.status(409).json({
           success: false,
-          message: "Some files already exist. Please try again.",
-          error: "DUPLICATE_FILES",
+          message: "一部のファイルが既に存在します。しばらく待ってから再試行してください。",
+          errorCode: "DUPLICATE_FILES",
           cleanedUp: savedFiles.length,
         });
       } else if (transactionError.name === 'ProvisionedThroughputExceededException') {
         res.status(503).json({
           success: false,
-          message: "Database is temporarily overloaded. Please try again in a few seconds.",
-          error: "THROUGHPUT_EXCEEDED",
+          message: "データベースが一時的に混雑しています。少し待ってから再試行してください。",
+          errorCode: "THROUGHPUT_EXCEEDED",
           cleanedUp: savedFiles.length,
         });
       } else {
         res.status(500).json({
           success: false,
-          message: "Failed to save album",
+          message: "アルバムの保存に失敗しました",
+          errorCode: "TRANSACTION_FAILED",
           error: transactionError.message,
           cleanedUp: savedFiles.length,
         });
@@ -413,6 +507,8 @@ app.post("/photos/batch-save-album", async function (req, res) {
     console.error("Error in batch save album:", error);
     res.status(500).json({
       success: false,
+      message: "内部サーバーエラーが発生しました",
+      errorCode: "INTERNAL_SERVER_ERROR",
       error: error.message,
     });
   }

@@ -1,4 +1,4 @@
-// src/components/PhotoUpload.tsx - バッチアップロード対応版
+// src/components/PhotoUpload.tsx - バランス型設定（進捗表示なし）
 "use client";
 
 import { useState, useRef } from "react";
@@ -24,39 +24,35 @@ interface SelectedFile {
   mediaType: "photo" | "video";
 }
 
-interface UploadProgress {
-  phase: "preparing" | "uploading" | "saving" | "complete" | "error";
-  current: number;
-  total: number;
-  message: string;
-}
-
-const MAX_FILES = 20;
-const MAX_PHOTO_SIZE = 8 * 1024 * 1024; // 8MB
-const MAX_VIDEO_SIZE = 50 * 1024 * 1024; // 50MB
-const MAX_TOTAL_SIZE = 100 * 1024 * 1024; // 100MB
+// ✅ バランス型設定
+const MAX_PHOTO_FILES = 20; // 写真: 20ファイル
+const MAX_VIDEO_FILES = 3; // 動画: 3ファイル
+const MAX_PHOTO_SIZE = 50 * 1024 * 1024; // 50MB
+const MAX_VIDEO_SIZE = 200 * 1024 * 1024; // 200MB
+const MAX_TOTAL_SIZE = 500 * 1024 * 1024; // 500MB
 
 export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaType }: PhotoUploadProps) {
   const [uploading, setUploading] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<SelectedFile[]>([]);
   const [caption, setCaption] = useState("");
   const [showWeddingConfirm, setShowWeddingConfirm] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState<UploadProgress>({
-    phase: "preparing",
-    current: 0,
-    total: 0,
-    message: "",
-  });
 
   const buttonRef = useRef<HTMLButtonElement>(null);
   const API_BASE = awsconfig.aws_cloud_logic_custom[0].endpoint;
 
-  // ファイル選択処理（既存と同じ）
+  // ✅ メディアタイプ別の制限値を取得
+  const getMaxFiles = () => (selectedMediaType === "photo" ? MAX_PHOTO_FILES : MAX_VIDEO_FILES);
+  const getMaxSize = () => (selectedMediaType === "photo" ? MAX_PHOTO_SIZE : MAX_VIDEO_SIZE);
+  const getMaxSizeText = () => (selectedMediaType === "photo" ? "50MB" : "200MB");
+
+  // ファイル選択処理
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || []);
+    const maxFiles = getMaxFiles();
 
     let validFiles: File[] = [];
 
+    // ファイル形式チェック
     if (selectedMediaType === "photo") {
       validFiles = files.filter((file) => file.type.startsWith("image/"));
       if (validFiles.length !== files.length) {
@@ -74,20 +70,27 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
       return;
     }
 
-    if (selectedFiles.length + validFiles.length > MAX_FILES) {
-      alert(`最大${MAX_FILES}個まで選択できます`);
+    // ✅ メディアタイプ別枚数制限チェック
+    if (selectedFiles.length + validFiles.length > maxFiles) {
+      const mediaTypeText = selectedMediaType === "photo" ? "写真" : "動画";
+      const timeEstimate = selectedMediaType === "photo" ? "" : "（約1-2分対応）";
+      alert(
+        `${mediaTypeText}は最大${maxFiles}個まで選択できます${timeEstimate}\n\n現在: ${selectedFiles.length}個\n追加しようとした数: ${validFiles.length}個\n制限: ${maxFiles}個`
+      );
       return;
     }
 
     // 個別ファイルサイズチェック
-    const maxSize = selectedMediaType === "photo" ? MAX_PHOTO_SIZE : MAX_VIDEO_SIZE;
+    const maxSize = getMaxSize();
     const oversizedFiles = validFiles.filter((file) => file.size > maxSize);
 
     if (oversizedFiles.length > 0) {
-      const maxSizeText = selectedMediaType === "photo" ? "8MB" : "50MB";
+      const maxSizeText = getMaxSizeText();
+      const mediaTypeText = selectedMediaType === "photo" ? "画像" : "動画";
+      const description = selectedMediaType === "photo" ? "（プロ撮影・高画質対応）" : "（約1-2分の動画対応）";
       alert(
-        `${selectedMediaType === "photo" ? "画像" : "動画"}ファイルは${maxSizeText}以下にしてください\n\n大きすぎるファイル:\n${oversizedFiles
-          .map((f) => f.name)
+        `${mediaTypeText}ファイルは${maxSizeText}以下にしてください${description}\n\n大きすぎるファイル:\n${oversizedFiles
+          .map((f) => `${f.name} (${(f.size / (1024 * 1024)).toFixed(1)}MB)`)
           .join("\n")}`
       );
       return;
@@ -162,7 +165,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
     setShowWeddingConfirm(false);
   };
 
-  // ✅ 新しいバッチアップロード処理
+  // ✅ シンプルなバッチアップロード処理
   const performBatchUpload = async () => {
     if (selectedFiles.length === 0 || !userInfo) return;
 
@@ -174,14 +177,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
       const albumId = uuidv4();
       const uploadedAt = new Date().toISOString();
 
-      // 🔥 Step 1: 署名付きURLを一括取得
-      setUploadProgress({
-        phase: "preparing",
-        current: 0,
-        total: selectedFiles.length,
-        message: "アップロード準備中...",
-      });
-
+      // Step 1: 署名付きURLを一括取得
       const filesInfo = selectedFiles.map((file, index) => ({
         fileName: file.file.name,
         fileType: file.file.type,
@@ -207,14 +203,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
 
       console.log(`✅ ${urlResult.uploadUrls.length}個の署名付きURL取得完了`);
 
-      // 🔥 Step 2: 全ファイルをS3に並行アップロード
-      setUploadProgress({
-        phase: "uploading",
-        current: 0,
-        total: selectedFiles.length,
-        message: "ファイルをアップロード中...",
-      });
-
+      // Step 2: 全ファイルをS3に並行アップロード
       const uploadPromises = selectedFiles.map(async (selectedFile, index) => {
         const uploadInfo = urlResult.uploadUrls[index];
 
@@ -228,13 +217,6 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
           if (!response.ok) {
             throw new Error(`S3 upload failed: ${response.statusText}`);
           }
-
-          // 進捗更新
-          setUploadProgress((prev) => ({
-            ...prev,
-            current: prev.current + 1,
-            message: `ファイルをアップロード中... (${prev.current + 1}/${prev.total})`,
-          }));
 
           return {
             success: true,
@@ -268,14 +250,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
 
       console.log(`✅ 全${successfulUploads.length}ファイルのS3アップロード完了`);
 
-      // 🔥 Step 3: 1回のAPIで全メタデータを保存
-      setUploadProgress({
-        phase: "saving",
-        current: 0,
-        total: 1,
-        message: "データベースに保存中...",
-      });
-
+      // Step 3: 1回のAPIで全メタデータを保存
       console.log("🔄 バッチでメタデータ保存中...");
       const saveResponse = await fetch(`${API_BASE}/photos/batch-save-album`, {
         method: "POST",
@@ -293,42 +268,24 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
 
       const saveResult = await saveResponse.json();
       if (!saveResult.success) {
-        // バックエンドでS3クリーンアップは自動実行される
         throw new Error(saveResult.message || "Failed to save album metadata");
       }
 
       console.log(`✅ アルバム保存完了: ${saveResult.totalFiles}ファイル、${saveResult.batches}バッチ`);
 
-      // 🔥 Step 4: 完了処理
-      setUploadProgress({
-        phase: "complete",
-        current: selectedFiles.length,
-        total: selectedFiles.length,
-        message: "アップロード完了！",
-      });
-
-      // クリーンアップ
+      // 完了処理
       selectedFiles.forEach((file) => URL.revokeObjectURL(file.preview));
       setSelectedFiles([]);
       setCaption("");
       const fileInput = document.getElementById("file-input") as HTMLInputElement;
       if (fileInput) fileInput.value = "";
 
-      // 成功通知
       setTimeout(() => {
         onUploadSuccess();
       }, 1000);
     } catch (error) {
       console.error("Batch upload error:", error);
 
-      setUploadProgress({
-        phase: "error",
-        current: 0,
-        total: selectedFiles.length,
-        message: "エラーが発生しました",
-      });
-
-      // エラー処理
       if (error instanceof Error) {
         if (error.message.includes("exceeds") && error.message.includes("limit")) {
           alert(`❌ ファイルサイズエラー\n${error.message}`);
@@ -344,7 +301,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
       }
 
       setTimeout(() => {
-        onUploadSuccess(); // エラー時もモーダルを閉じる
+        onUploadSuccess();
       }, 2000);
     } finally {
       setUploading(false);
@@ -353,6 +310,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
 
   const totalFileSize = selectedFiles.reduce((sum, file) => sum + file.file.size, 0) / (1024 * 1024);
   const maxTotalSizeMB = MAX_TOTAL_SIZE / (1024 * 1024);
+  const maxFiles = getMaxFiles();
 
   return (
     <>
@@ -360,7 +318,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
         {/* ファイル選択エリア */}
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-3">
-            {selectedMediaType === "photo" ? "写真" : "動画"}を選択 ({selectedFiles.length}/{MAX_FILES}個)
+            {selectedMediaType === "photo" ? "写真" : "動画"}を選択 ({selectedFiles.length}/{maxFiles}個)
             {selectedFiles.length > 0 && (
               <span className={`text-xs ml-2 ${totalFileSize > maxTotalSizeMB * 0.8 ? "text-orange-600" : "text-gray-500"}`}>
                 ({totalFileSize.toFixed(1)}MB / {maxTotalSizeMB}MB)
@@ -380,9 +338,11 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
                   : `${selectedMediaType === "photo" ? "写真" : "動画"}を追加`}
               </p>
               <p className="text-xs text-gray-500 mt-1">
-                {selectedMediaType === "photo" ? "JPG, PNG, GIF, WebP（最大8MB）" : "MP4, MOV, AVI, WebM（最大50MB）"}
+                {selectedMediaType === "photo" ? "JPG, PNG, GIF, WebP（最大50MB・プロ撮影対応）" : "MP4, MOV, AVI, WebM（最大200MB・約1-2分対応）"}
               </p>
-              <p className="text-xs text-gray-400 mt-1">合計サイズ制限: {maxTotalSizeMB}MB</p>
+              <p className="text-xs text-gray-400 mt-1">
+                最大{maxFiles}個 | 合計{maxTotalSizeMB}MB
+              </p>
             </div>
             <input
               id="file-input"
@@ -391,7 +351,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
               multiple
               onChange={handleFileSelect}
               className="hidden"
-              disabled={selectedFiles.length >= MAX_FILES || uploading}
+              disabled={selectedFiles.length >= maxFiles || uploading}
             />
           </label>
         </div>
@@ -401,7 +361,11 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
           <div className="bg-pink-50/50 rounded-2xl p-3">
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-sm font-semibold text-gray-700">
-                選択中の{selectedMediaType === "photo" ? "写真" : "動画"} ({selectedFiles.length}個)
+                選択中の{selectedMediaType === "photo" ? "写真" : "動画"} ({selectedFiles.length}/{maxFiles}個)
+                {((selectedMediaType === "video" && selectedFiles.length === maxFiles) ||
+                  (selectedMediaType === "photo" && selectedFiles.length === maxFiles)) && (
+                  <span className="ml-2 text-xs text-orange-600">制限に達しました</span>
+                )}
               </h3>
               <button onClick={removeAllFiles} className="text-xs text-red-500 hover:text-red-700 font-medium" disabled={uploading}>
                 すべて削除
@@ -444,85 +408,6 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
           </div>
         )}
 
-        {/* アップロード進捗表示 */}
-        {uploading && (
-          <div className="bg-blue-50/50 rounded-2xl p-4">
-            <div className="flex items-center space-x-3 mb-3">
-              <div className="w-6 h-6 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin"></div>
-              <div className="flex-1">
-                <p className="text-sm font-medium text-blue-800">{uploadProgress.message}</p>
-                <div className="flex items-center space-x-2 mt-1">
-                  <div className="flex-1 bg-blue-200 rounded-full h-2">
-                    <div
-                      className="bg-blue-500 h-2 rounded-full transition-all duration-300"
-                      style={{ width: `${(uploadProgress.current / uploadProgress.total) * 100}%` }}
-                    />
-                  </div>
-                  <span className="text-xs text-blue-600 font-medium">
-                    {uploadProgress.phase === "saving" ? "保存中" : `${uploadProgress.current}/${uploadProgress.total}`}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* フェーズ表示 */}
-            <div className="flex items-center space-x-4 text-xs">
-              <div
-                className={`flex items-center space-x-1 ${
-                  uploadProgress.phase === "preparing"
-                    ? "text-blue-600"
-                    : uploadProgress.phase === "uploading" || uploadProgress.phase === "saving" || uploadProgress.phase === "complete"
-                    ? "text-green-600"
-                    : "text-gray-400"
-                }`}
-              >
-                <div
-                  className={`w-2 h-2 rounded-full ${
-                    uploadProgress.phase === "preparing"
-                      ? "bg-blue-500"
-                      : uploadProgress.phase === "uploading" || uploadProgress.phase === "saving" || uploadProgress.phase === "complete"
-                      ? "bg-green-500"
-                      : "bg-gray-300"
-                  }`}
-                />
-                <span>準備</span>
-              </div>
-              <div
-                className={`flex items-center space-x-1 ${
-                  uploadProgress.phase === "uploading"
-                    ? "text-blue-600"
-                    : uploadProgress.phase === "saving" || uploadProgress.phase === "complete"
-                    ? "text-green-600"
-                    : "text-gray-400"
-                }`}
-              >
-                <div
-                  className={`w-2 h-2 rounded-full ${
-                    uploadProgress.phase === "uploading"
-                      ? "bg-blue-500"
-                      : uploadProgress.phase === "saving" || uploadProgress.phase === "complete"
-                      ? "bg-green-500"
-                      : "bg-gray-300"
-                  }`}
-                />
-                <span>アップロード</span>
-              </div>
-              <div
-                className={`flex items-center space-x-1 ${
-                  uploadProgress.phase === "saving" ? "text-blue-600" : uploadProgress.phase === "complete" ? "text-green-600" : "text-gray-400"
-                }`}
-              >
-                <div
-                  className={`w-2 h-2 rounded-full ${
-                    uploadProgress.phase === "saving" ? "bg-blue-500" : uploadProgress.phase === "complete" ? "bg-green-500" : "bg-gray-300"
-                  }`}
-                />
-                <span>保存</span>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* キャプション入力 */}
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-3">
@@ -545,13 +430,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
             {uploading ? (
               <div className="flex items-center justify-center space-x-2">
                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                <span>
-                  {uploadProgress.phase === "preparing" && "準備中..."}
-                  {uploadProgress.phase === "uploading" && `アップロード中... (${uploadProgress.current}/${uploadProgress.total})`}
-                  {uploadProgress.phase === "saving" && "データベース保存中..."}
-                  {uploadProgress.phase === "complete" && "完了！"}
-                  {uploadProgress.phase === "error" && "エラー"}
-                </span>
+                <span>アップロード中...</span>
               </div>
             ) : (
               `${
