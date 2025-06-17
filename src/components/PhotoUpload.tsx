@@ -1,3 +1,4 @@
+// src/components/PhotoUpload.tsx - バッチアップロード対応版
 "use client";
 
 import { useState, useRef } from "react";
@@ -8,13 +9,12 @@ import awsconfig from "../aws-exports";
 import WeddingConfirmDialog from "./WeddingConfirmDialog";
 import BubblyButton from "./BubblyButton";
 
-// Amplifyの設定
 Amplify.configure(awsconfig);
 
 interface PhotoUploadProps {
   onUploadSuccess: () => void;
   userInfo: { passcode: string; name: string } | null;
-  selectedMediaType: "photo" | "video"; // 新しいprops
+  selectedMediaType: "photo" | "video";
 }
 
 interface SelectedFile {
@@ -24,18 +24,34 @@ interface SelectedFile {
   mediaType: "photo" | "video";
 }
 
-const MAX_FILES = 10;
+interface UploadProgress {
+  phase: "preparing" | "uploading" | "saving" | "complete" | "error";
+  current: number;
+  total: number;
+  message: string;
+}
+
+const MAX_FILES = 20;
+const MAX_PHOTO_SIZE = 8 * 1024 * 1024; // 8MB
+const MAX_VIDEO_SIZE = 50 * 1024 * 1024; // 50MB
+const MAX_TOTAL_SIZE = 100 * 1024 * 1024; // 100MB
 
 export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaType }: PhotoUploadProps) {
   const [uploading, setUploading] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<SelectedFile[]>([]);
   const [caption, setCaption] = useState("");
   const [showWeddingConfirm, setShowWeddingConfirm] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress>({
+    phase: "preparing",
+    current: 0,
+    total: 0,
+    message: "",
+  });
 
   const buttonRef = useRef<HTMLButtonElement>(null);
   const API_BASE = awsconfig.aws_cloud_logic_custom[0].endpoint;
 
-  // ファイル選択処理
+  // ファイル選択処理（既存と同じ）
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || []);
 
@@ -63,16 +79,32 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
       return;
     }
 
-    // ファイルサイズチェック
-    const maxPhotoSize = 10 * 1024 * 1024; // 10MB
-    const maxVideoSize = 100 * 1024 * 1024; // 100MB
+    // 個別ファイルサイズチェック
+    const maxSize = selectedMediaType === "photo" ? MAX_PHOTO_SIZE : MAX_VIDEO_SIZE;
+    const oversizedFiles = validFiles.filter((file) => file.size > maxSize);
 
-    for (const file of validFiles) {
-      const maxSize = selectedMediaType === "photo" ? maxPhotoSize : maxVideoSize;
-      if (file.size > maxSize) {
-        alert(`${selectedMediaType === "photo" ? "画像" : "動画"}ファイルは${selectedMediaType === "photo" ? "10MB" : "100MB"}以下にしてください`);
-        return;
-      }
+    if (oversizedFiles.length > 0) {
+      const maxSizeText = selectedMediaType === "photo" ? "8MB" : "50MB";
+      alert(
+        `${selectedMediaType === "photo" ? "画像" : "動画"}ファイルは${maxSizeText}以下にしてください\n\n大きすぎるファイル:\n${oversizedFiles
+          .map((f) => f.name)
+          .join("\n")}`
+      );
+      return;
+    }
+
+    // 合計サイズチェック
+    const currentTotalSize = selectedFiles.reduce((sum, file) => sum + file.file.size, 0);
+    const newFilesTotalSize = validFiles.reduce((sum, file) => sum + file.size, 0);
+    const totalSize = currentTotalSize + newFilesTotalSize;
+
+    if (totalSize > MAX_TOTAL_SIZE) {
+      const totalSizeMB = (totalSize / (1024 * 1024)).toFixed(1);
+      const maxTotalSizeMB = (MAX_TOTAL_SIZE / (1024 * 1024)).toFixed(0);
+      alert(
+        `合計ファイルサイズが制限を超えています\n\n現在の合計: ${totalSizeMB}MB\n制限: ${maxTotalSizeMB}MB\n\nファイル数を減らすか、より小さなファイルを選択してください`
+      );
+      return;
     }
 
     const newFiles: SelectedFile[] = validFiles.map((file) => ({
@@ -92,6 +124,14 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
     if (fileInput) fileInput.value = "";
   };
 
+  const removeFile = (fileId: string) => {
+    const fileToRemove = selectedFiles.find((f) => f.id === fileId);
+    if (fileToRemove) {
+      URL.revokeObjectURL(fileToRemove.preview);
+    }
+    setSelectedFiles((prev) => prev.filter((f) => f.id !== fileId));
+  };
+
   const animateButton = () => {
     if (buttonRef.current) {
       buttonRef.current.classList.remove("animate");
@@ -108,25 +148,22 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
     }
   };
 
-  // アップロードボタンクリック時
   const handleUploadClick = () => {
     if (selectedFiles.length === 0) return;
     setShowWeddingConfirm(true);
   };
 
-  // 確認ダイアログで「はい」を選択
   const handleWeddingConfirm = () => {
     setShowWeddingConfirm(false);
-    performUpload();
+    performBatchUpload();
   };
 
-  // 確認ダイアログで「いいえ」を選択
   const handleWeddingCancel = () => {
     setShowWeddingConfirm(false);
   };
 
-  // 実際のアップロード処理
-  const performUpload = async () => {
+  // ✅ 新しいバッチアップロード処理
+  const performBatchUpload = async () => {
     if (selectedFiles.length === 0 || !userInfo) return;
 
     animateButton();
@@ -137,71 +174,138 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
       const albumId = uuidv4();
       const uploadedAt = new Date().toISOString();
 
+      // 🔥 Step 1: 署名付きURLを一括取得
+      setUploadProgress({
+        phase: "preparing",
+        current: 0,
+        total: selectedFiles.length,
+        message: "アップロード準備中...",
+      });
+
+      const filesInfo = selectedFiles.map((file, index) => ({
+        fileName: file.file.name,
+        fileType: file.file.type,
+        size: file.file.size,
+        mediaType: file.mediaType,
+        fileIndex: index,
+      }));
+
+      console.log("🔄 署名付きURLを一括取得中...");
+      const urlResponse = await fetch(`${API_BASE}/photos/batch-upload-urls`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          files: filesInfo,
+          passcode: user.username,
+        }),
+      });
+
+      const urlResult = await urlResponse.json();
+      if (!urlResult.success) {
+        throw new Error(urlResult.message || "Failed to get upload URLs");
+      }
+
+      console.log(`✅ ${urlResult.uploadUrls.length}個の署名付きURL取得完了`);
+
+      // 🔥 Step 2: 全ファイルをS3に並行アップロード
+      setUploadProgress({
+        phase: "uploading",
+        current: 0,
+        total: selectedFiles.length,
+        message: "ファイルをアップロード中...",
+      });
+
       const uploadPromises = selectedFiles.map(async (selectedFile, index) => {
-        const mediaId = uuidv4();
+        const uploadInfo = urlResult.uploadUrls[index];
 
         try {
-          // 1. 署名付きURL取得
-          const urlResponse = await fetch(`${API_BASE}/photos/upload-url`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              fileName: selectedFile.file.name,
-              fileType: selectedFile.file.type,
-              passcode: user.username,
-              mediaType: selectedFile.mediaType,
-            }),
-          });
-
-          const urlResult = await urlResponse.json();
-          if (!urlResult.success) {
-            throw new Error(urlResult.message || "Failed to get upload URL");
-          }
-
-          // 2. S3にアップロード
-          await fetch(urlResult.uploadURL, {
+          const response = await fetch(uploadInfo.uploadURL, {
             method: "PUT",
             body: selectedFile.file,
             headers: { "Content-Type": selectedFile.file.type },
           });
 
-          // 3. DBに保存
-          const saveResponse = await fetch(`${API_BASE}/photos/save-album`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              photoId: mediaId,
-              albumId: albumId,
-              uploadedBy: user.username,
-              caption: index === 0 ? caption : "",
-              s3Key: urlResult.s3Key,
-              uploaderName: userInfo.name,
-              uploadedAt: uploadedAt,
-              photoIndex: index,
-              totalPhotos: selectedFiles.length,
-              isMainPhoto: index === 0,
-              mediaType: selectedFile.mediaType,
-              fileType: selectedFile.file.type,
-            }),
-          });
-
-          const saveResult = await saveResponse.json();
-          if (!saveResult.success) {
-            throw new Error(saveResult.message || "Failed to save media metadata");
+          if (!response.ok) {
+            throw new Error(`S3 upload failed: ${response.statusText}`);
           }
 
-          return { success: true, mediaId, s3Key: urlResult.s3Key };
+          // 進捗更新
+          setUploadProgress((prev) => ({
+            ...prev,
+            current: prev.current + 1,
+            message: `ファイルをアップロード中... (${prev.current + 1}/${prev.total})`,
+          }));
+
+          return {
+            success: true,
+            photoId: uuidv4(),
+            s3Key: uploadInfo.s3Key,
+            mediaType: uploadInfo.mediaType,
+            fileType: uploadInfo.fileType,
+            fileName: uploadInfo.fileName,
+            size: uploadInfo.size,
+            fileIndex: index,
+          };
         } catch (error) {
           console.error(`Error uploading ${selectedFile.file.name}:`, error);
-          return { success: false, error, mediaId };
+          return {
+            success: false,
+            error,
+            fileName: selectedFile.file.name,
+            fileIndex: index,
+          };
         }
       });
 
-      const results = await Promise.all(uploadPromises);
-      const successCount = results.filter((r) => r.success).length;
-      const failureCount = results.length - successCount;
+      const uploadResults = await Promise.all(uploadPromises);
+      const successfulUploads = uploadResults.filter((result) => result.success);
+      const failedUploads = uploadResults.filter((result) => !result.success);
 
-      console.log(`Upload completed: ${successCount} success, ${failureCount} failures`);
+      if (failedUploads.length > 0) {
+        console.error(`${failedUploads.length}個のファイルアップロードが失敗:`, failedUploads);
+        throw new Error(`${failedUploads.length}個のファイルのアップロードに失敗しました`);
+      }
+
+      console.log(`✅ 全${successfulUploads.length}ファイルのS3アップロード完了`);
+
+      // 🔥 Step 3: 1回のAPIで全メタデータを保存
+      setUploadProgress({
+        phase: "saving",
+        current: 0,
+        total: 1,
+        message: "データベースに保存中...",
+      });
+
+      console.log("🔄 バッチでメタデータ保存中...");
+      const saveResponse = await fetch(`${API_BASE}/photos/batch-save-album`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          albumId: albumId,
+          uploadedBy: user.username,
+          uploaderName: userInfo.name,
+          caption: caption,
+          uploadedAt: uploadedAt,
+          files: successfulUploads,
+          passcode: user.username,
+        }),
+      });
+
+      const saveResult = await saveResponse.json();
+      if (!saveResult.success) {
+        // バックエンドでS3クリーンアップは自動実行される
+        throw new Error(saveResult.message || "Failed to save album metadata");
+      }
+
+      console.log(`✅ アルバム保存完了: ${saveResult.totalFiles}ファイル、${saveResult.batches}バッチ`);
+
+      // 🔥 Step 4: 完了処理
+      setUploadProgress({
+        phase: "complete",
+        current: selectedFiles.length,
+        total: selectedFiles.length,
+        message: "アップロード完了！",
+      });
 
       // クリーンアップ
       selectedFiles.forEach((file) => URL.revokeObjectURL(file.preview));
@@ -210,26 +314,45 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
       const fileInput = document.getElementById("file-input") as HTMLInputElement;
       if (fileInput) fileInput.value = "";
 
-      if (failureCount === 0) {
-        onUploadSuccess();
-      } else {
-        alert(`⚠️ アップロード完了\n${successCount}個が成功、${failureCount}個が失敗しました`);
-        setTimeout(() => {
-          onUploadSuccess();
-        }, 1000);
-      }
-    } catch (error) {
-      console.error("Upload error:", error);
-      alert("❌ アップロードエラー\nアップロード中にエラーが発生しました");
+      // 成功通知
       setTimeout(() => {
         onUploadSuccess();
       }, 1000);
+    } catch (error) {
+      console.error("Batch upload error:", error);
+
+      setUploadProgress({
+        phase: "error",
+        current: 0,
+        total: selectedFiles.length,
+        message: "エラーが発生しました",
+      });
+
+      // エラー処理
+      if (error instanceof Error) {
+        if (error.message.includes("exceeds") && error.message.includes("limit")) {
+          alert(`❌ ファイルサイズエラー\n${error.message}`);
+        } else if (error.message.includes("already exist")) {
+          alert("❌ 重複エラー\n同じファイルが既に存在します。しばらく待ってから再試行してください。");
+        } else if (error.message.includes("overloaded")) {
+          alert("❌ サーバー負荷エラー\nサーバーが一時的に混雑しています。少し待ってから再試行してください。");
+        } else {
+          alert(`❌ アップロードエラー\n${error.message}`);
+        }
+      } else {
+        alert("❌ 予期しないエラーが発生しました");
+      }
+
+      setTimeout(() => {
+        onUploadSuccess(); // エラー時もモーダルを閉じる
+      }, 2000);
     } finally {
       setUploading(false);
     }
   };
 
   const totalFileSize = selectedFiles.reduce((sum, file) => sum + file.file.size, 0) / (1024 * 1024);
+  const maxTotalSizeMB = MAX_TOTAL_SIZE / (1024 * 1024);
 
   return (
     <>
@@ -238,7 +361,11 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-3">
             {selectedMediaType === "photo" ? "写真" : "動画"}を選択 ({selectedFiles.length}/{MAX_FILES}個)
-            {selectedFiles.length > 0 && <span className="text-xs text-gray-500 ml-2">({totalFileSize.toFixed(1)}MB)</span>}
+            {selectedFiles.length > 0 && (
+              <span className={`text-xs ml-2 ${totalFileSize > maxTotalSizeMB * 0.8 ? "text-orange-600" : "text-gray-500"}`}>
+                ({totalFileSize.toFixed(1)}MB / {maxTotalSizeMB}MB)
+              </span>
+            )}
           </label>
 
           <label
@@ -253,8 +380,9 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
                   : `${selectedMediaType === "photo" ? "写真" : "動画"}を追加`}
               </p>
               <p className="text-xs text-gray-500 mt-1">
-                {selectedMediaType === "photo" ? "JPG, PNG, GIF, WebP（最大10MB）" : "MP4, MOV, AVI, WebM（最大100MB）"}
+                {selectedMediaType === "photo" ? "JPG, PNG, GIF, WebP（最大8MB）" : "MP4, MOV, AVI, WebM（最大50MB）"}
               </p>
+              <p className="text-xs text-gray-400 mt-1">合計サイズ制限: {maxTotalSizeMB}MB</p>
             </div>
             <input
               id="file-input"
@@ -263,7 +391,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
               multiple
               onChange={handleFileSelect}
               className="hidden"
-              disabled={selectedFiles.length >= MAX_FILES}
+              disabled={selectedFiles.length >= MAX_FILES || uploading}
             />
           </label>
         </div>
@@ -279,7 +407,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
                 すべて削除
               </button>
             </div>
-            <div className="space-y-2 max-h-32 overflow-y-auto">
+            <div className="space-y-2 max-h-40 overflow-y-auto">
               {selectedFiles.map((selectedFile, index) => (
                 <div key={selectedFile.id} className="flex items-center justify-between bg-white rounded-lg p-2">
                   <div className="flex items-center space-x-2">
@@ -301,8 +429,96 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
                       </p>
                     </div>
                   </div>
+                  <button
+                    onClick={() => removeFile(selectedFile.id)}
+                    className="p-1 hover:bg-red-100 rounded text-red-500 hover:text-red-700"
+                    disabled={uploading}
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* アップロード進捗表示 */}
+        {uploading && (
+          <div className="bg-blue-50/50 rounded-2xl p-4">
+            <div className="flex items-center space-x-3 mb-3">
+              <div className="w-6 h-6 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin"></div>
+              <div className="flex-1">
+                <p className="text-sm font-medium text-blue-800">{uploadProgress.message}</p>
+                <div className="flex items-center space-x-2 mt-1">
+                  <div className="flex-1 bg-blue-200 rounded-full h-2">
+                    <div
+                      className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                      style={{ width: `${(uploadProgress.current / uploadProgress.total) * 100}%` }}
+                    />
+                  </div>
+                  <span className="text-xs text-blue-600 font-medium">
+                    {uploadProgress.phase === "saving" ? "保存中" : `${uploadProgress.current}/${uploadProgress.total}`}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* フェーズ表示 */}
+            <div className="flex items-center space-x-4 text-xs">
+              <div
+                className={`flex items-center space-x-1 ${
+                  uploadProgress.phase === "preparing"
+                    ? "text-blue-600"
+                    : uploadProgress.phase === "uploading" || uploadProgress.phase === "saving" || uploadProgress.phase === "complete"
+                    ? "text-green-600"
+                    : "text-gray-400"
+                }`}
+              >
+                <div
+                  className={`w-2 h-2 rounded-full ${
+                    uploadProgress.phase === "preparing"
+                      ? "bg-blue-500"
+                      : uploadProgress.phase === "uploading" || uploadProgress.phase === "saving" || uploadProgress.phase === "complete"
+                      ? "bg-green-500"
+                      : "bg-gray-300"
+                  }`}
+                />
+                <span>準備</span>
+              </div>
+              <div
+                className={`flex items-center space-x-1 ${
+                  uploadProgress.phase === "uploading"
+                    ? "text-blue-600"
+                    : uploadProgress.phase === "saving" || uploadProgress.phase === "complete"
+                    ? "text-green-600"
+                    : "text-gray-400"
+                }`}
+              >
+                <div
+                  className={`w-2 h-2 rounded-full ${
+                    uploadProgress.phase === "uploading"
+                      ? "bg-blue-500"
+                      : uploadProgress.phase === "saving" || uploadProgress.phase === "complete"
+                      ? "bg-green-500"
+                      : "bg-gray-300"
+                  }`}
+                />
+                <span>アップロード</span>
+              </div>
+              <div
+                className={`flex items-center space-x-1 ${
+                  uploadProgress.phase === "saving" ? "text-blue-600" : uploadProgress.phase === "complete" ? "text-green-600" : "text-gray-400"
+                }`}
+              >
+                <div
+                  className={`w-2 h-2 rounded-full ${
+                    uploadProgress.phase === "saving" ? "bg-blue-500" : uploadProgress.phase === "complete" ? "bg-green-500" : "bg-gray-300"
+                  }`}
+                />
+                <span>保存</span>
+              </div>
             </div>
           </div>
         )}
@@ -329,7 +545,13 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
             {uploading ? (
               <div className="flex items-center justify-center space-x-2">
                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                <span>アップロード中...</span>
+                <span>
+                  {uploadProgress.phase === "preparing" && "準備中..."}
+                  {uploadProgress.phase === "uploading" && `アップロード中... (${uploadProgress.current}/${uploadProgress.total})`}
+                  {uploadProgress.phase === "saving" && "データベース保存中..."}
+                  {uploadProgress.phase === "complete" && "完了！"}
+                  {uploadProgress.phase === "error" && "エラー"}
+                </span>
               </div>
             ) : (
               `${
@@ -337,7 +559,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
                   ? `${selectedMediaType === "photo" ? "写真" : "動画"}を選択してください`
                   : selectedFiles.length === 1
                   ? `${selectedMediaType === "photo" ? "写真" : "動画"}をアップロード`
-                  : `${selectedFiles.length}個をアップロード`
+                  : `${selectedFiles.length}個を一括アップロード`
               }`
             )}
           </BubblyButton>

@@ -1,6 +1,7 @@
 const express = require("express");
 const bodyParser = require("body-parser");
 const awsServerlessExpressMiddleware = require("aws-serverless-express/middleware");
+const { TransactWriteCommand } = require("@aws-sdk/lib-dynamodb");
 
 // ✅ 必要なimport（S3とDynamoDB両方）
 const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
@@ -112,57 +113,116 @@ app.post("/photos/user", async function (req, res) {
 });
 
 /**********************
- * 写真・動画アップロード機能 *
+ * バッチアップロード機能 *
  **********************/
 
-// ✅ アップロード用署名付きURL生成
-app.post("/photos/upload-url", async function (req, res) {
+// ✅ バッチ署名付きURL生成
+app.post("/photos/batch-upload-urls", async function (req, res) {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Headers", "*");
 
   try {
-    const { fileName, fileType, passcode, mediaType = "photo" } = req.body;
+    const { files, passcode } = req.body;
 
-    if (!fileName || !fileType || !passcode) {
+    if (!files || !Array.isArray(files) || files.length === 0) {
       return res.status(400).json({
         success: false,
-        message: "fileName, fileType, and passcode are required",
+        message: "files array is required",
       });
     }
 
-    // ファイルタイプの検証
+    if (!passcode) {
+      return res.status(400).json({
+        success: false,
+        message: "passcode is required",
+      });
+    }
+
+    // ファイル数制限チェック
+    if (files.length > 20) {
+      return res.status(400).json({
+        success: false,
+        message: "Maximum 20 files allowed",
+      });
+    }
+
+    // 合計サイズチェック（100MB制限）
+    const MAX_TOTAL_SIZE = 100 * 1024 * 1024; // 100MB
+    let totalSize = 0;
+    
+    for (const file of files) {
+      totalSize += file.size || 0;
+    }
+
+    if (totalSize > MAX_TOTAL_SIZE) {
+      return res.status(400).json({
+        success: false,
+        message: `Total file size exceeds 100MB limit. Current: ${(totalSize / (1024 * 1024)).toFixed(1)}MB`,
+      });
+    }
+
     const allowedPhotoTypes = ["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"];
     const allowedVideoTypes = ["video/mp4", "video/quicktime", "video/x-msvideo", "video/webm"];
     const allAllowedTypes = [...allowedPhotoTypes, ...allowedVideoTypes];
 
-    if (!allAllowedTypes.includes(fileType)) {
-      return res.status(400).json({
-        success: false,
-        message: "Unsupported file type",
+    const uploadUrls = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      
+      // ファイルタイプ検証
+      if (!allAllowedTypes.includes(file.fileType)) {
+        return res.status(400).json({
+          success: false,
+          message: `Unsupported file type: ${file.fileType}`,
+        });
+      }
+
+      // 個別ファイルサイズチェック
+      const isVideo = allowedVideoTypes.includes(file.fileType);
+      const maxSize = isVideo ? 50 * 1024 * 1024 : 8 * 1024 * 1024; // 50MB for video, 8MB for photo
+      
+      if (file.size > maxSize) {
+        return res.status(400).json({
+          success: false,
+          message: `File ${file.fileName} exceeds size limit (${isVideo ? '50MB' : '8MB'})`,
+        });
+      }
+
+      // S3キー生成
+      const timestamp = Date.now();
+      const s3Key = `${isVideo ? "videos" : "photos"}/${timestamp}_${i}_${file.fileName}`;
+      
+      const s3Params = {
+        Bucket: process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME,
+        Key: `public/${s3Key}`,
+        ContentType: file.fileType,
+        Expires: 600, // 10分（バッチ処理のため延長）
+      };
+
+      const uploadURL = s3.getSignedUrl("putObject", s3Params);
+
+      uploadUrls.push({
+        fileIndex: i,
+        fileName: file.fileName,
+        uploadURL: uploadURL,
+        s3Key: s3Key,
+        mediaType: isVideo ? "video" : "photo",
+        fileType: file.fileType,
+        size: file.size,
       });
     }
 
-    const isVideo = allowedVideoTypes.includes(fileType);
-
-    // S3 署名付きURL生成
-    const s3Key = `${isVideo ? "videos" : "photos"}/${Date.now()}_${fileName}`;
-    const s3Params = {
-      Bucket: process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME,
-      Key: `public/${s3Key}`, // S3アップロード用にはpublicを付ける
-      ContentType: fileType,
-      Expires: 300, // 5分
-    };
-
-    const uploadURL = s3.getSignedUrl("putObject", s3Params);
-
     res.json({
       success: true,
-      uploadURL: uploadURL,
-      s3Key: s3Key, // DynamoDBにはpublicプレフィックスなしで保存
-      mediaType: isVideo ? "video" : "photo",
+      uploadUrls: uploadUrls,
+      totalFiles: files.length,
+      totalSize: totalSize,
+      expiresIn: 600, // 10分
     });
+
   } catch (error) {
-    console.error("Error creating upload URL:", error);
+    console.error("Error creating batch upload URLs:", error);
     res.status(500).json({
       success: false,
       error: error.message,
@@ -170,50 +230,238 @@ app.post("/photos/upload-url", async function (req, res) {
   }
 });
 
-// ✅ アルバム保存エンドポイント
-app.post("/photos/save-album", async function (req, res) {
+// ✅ バッチアルバム保存（トランザクション対応）
+app.post("/photos/batch-save-album", async function (req, res) {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Headers", "*");
 
   try {
-    const { photoId, albumId, uploadedBy, caption, s3Key, uploaderName, uploadedAt, photoIndex, totalPhotos, isMainPhoto, mediaType, fileType } = req.body;
+    const { 
+      albumId, 
+      uploadedBy, 
+      uploaderName, 
+      caption, 
+      uploadedAt, 
+      files, // [{ photoId, s3Key, mediaType, fileType, fileName, size, fileIndex }]
+      passcode 
+    } = req.body;
 
-    if (!photoId || !uploadedBy || !s3Key) {
+    // バリデーション
+    if (!albumId || !uploadedBy || !uploaderName || !files || !Array.isArray(files)) {
       return res.status(400).json({
         success: false,
-        message: "Missing required fields: photoId, uploadedBy, s3Key",
+        message: "Missing required fields: albumId, uploadedBy, uploaderName, files",
       });
     }
 
-    const putCommand = new PutCommand({
-      TableName: process.env.STORAGE_PHOTOS_NAME,
-      Item: {
-        photoId: photoId,
-        albumId: albumId || photoId,
-        uploadedBy: uploadedBy,
-        uploaderName: uploaderName,
-        caption: caption || "",
-        s3Key: s3Key,
-        uploadedAt: uploadedAt,
-        photoIndex: photoIndex || 0,
-        totalPhotos: totalPhotos || 1,
-        isMainPhoto: isMainPhoto || false,
-        mediaType: mediaType || "photo",
-        fileType: fileType || "image/jpeg",
-        isPublic: true, // デフォルトで公開
-      },
+    if (files.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "files array cannot be empty",
+      });
+    }
+
+    if (files.length > 20) {
+      return res.status(400).json({
+        success: false,
+        message: "Maximum 20 files allowed",
+      });
+    }
+
+    // ユーザー存在確認
+    const userCheck = new GetCommand({
+      TableName: process.env.STORAGE_WEDDINGUSERS_NAME,
+      Key: { passcode: passcode }
     });
 
-    await docClient.send(putCommand);
+    const userResult = await docClient.send(userCheck);
+    if (!userResult.Item) {
+      return res.status(403).json({
+        success: false,
+        message: "Invalid user",
+      });
+    }
+
+    // DynamoDBのTransactWriteは最大25項目まで
+    // 10個ずつのバッチに分割
+    const BATCH_SIZE = 10;
+    const batches = [];
+    
+    for (let i = 0; i < files.length; i += BATCH_SIZE) {
+      batches.push(files.slice(i, i + BATCH_SIZE));
+    }
+
+    const savedFiles = [];
+    const failedFiles = [];
+
+    try {
+      // バッチごとにトランザクション実行
+      for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+        const batch = batches[batchIndex];
+        
+        // トランザクションアイテム作成
+        const transactItems = batch.map((file, batchFileIndex) => {
+          const globalIndex = batchIndex * BATCH_SIZE + batchFileIndex;
+          
+          return {
+            Put: {
+              TableName: process.env.STORAGE_PHOTOS_NAME,
+              Item: {
+                photoId: file.photoId,
+                albumId: albumId,
+                uploadedBy: uploadedBy,
+                uploaderName: uploaderName,
+                caption: globalIndex === 0 ? (caption || "") : "", // メイン写真のみキャプション
+                s3Key: file.s3Key,
+                uploadedAt: uploadedAt,
+                photoIndex: globalIndex,
+                totalPhotos: files.length,
+                isMainPhoto: globalIndex === 0,
+                mediaType: file.mediaType,
+                fileType: file.fileType,
+                fileName: file.fileName,
+                fileSize: file.size,
+                isPublic: true,
+                createdAt: new Date().toISOString(),
+              },
+              // 条件付き書き込み（同じphotoIdが存在しない場合のみ）
+              ConditionExpression: "attribute_not_exists(photoId)"
+            }
+          };
+        });
+
+        // トランザクション実行
+        const transactCommand = new TransactWriteCommand({
+          TransactItems: transactItems
+        });
+
+        await docClient.send(transactCommand);
+        
+        // 成功したファイルを記録
+        batch.forEach(file => {
+          savedFiles.push({
+            photoId: file.photoId,
+            s3Key: file.s3Key,
+            fileName: file.fileName
+          });
+        });
+
+        console.log(`✅ Batch ${batchIndex + 1}/${batches.length} saved successfully (${batch.length} files)`);
+        
+        // バッチ間で少し待機（DynamoDB負荷軽減）
+        if (batchIndex < batches.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      }
+
+      // 全バッチ成功
+      res.json({
+        success: true,
+        message: `Album saved successfully with ${files.length} files`,
+        albumId: albumId,
+        totalFiles: files.length,
+        savedFiles: savedFiles.length,
+        failedFiles: failedFiles.length,
+        batches: batches.length,
+      });
+
+    } catch (transactionError) {
+      console.error("Transaction failed:", transactionError);
+      
+      // トランザクション失敗時のS3クリーンアップを並行実行
+      const cleanupPromises = savedFiles.map(async (file) => {
+        try {
+          await s3.deleteObject({
+            Bucket: process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME,
+            Key: `public/${file.s3Key}`
+          }).promise();
+          console.log(`🧹 Cleaned up S3 file: ${file.s3Key}`);
+        } catch (cleanupError) {
+          console.error(`❌ Failed to cleanup S3 file ${file.s3Key}:`, cleanupError);
+        }
+      });
+
+      // クリーンアップを並行実行（レスポンスをブロックしない）
+      Promise.all(cleanupPromises).catch(console.error);
+
+      // エラーレスポンス
+      if (transactionError.name === 'ConditionalCheckFailedException') {
+        res.status(409).json({
+          success: false,
+          message: "Some files already exist. Please try again.",
+          error: "DUPLICATE_FILES",
+          cleanedUp: savedFiles.length,
+        });
+      } else if (transactionError.name === 'ProvisionedThroughputExceededException') {
+        res.status(503).json({
+          success: false,
+          message: "Database is temporarily overloaded. Please try again in a few seconds.",
+          error: "THROUGHPUT_EXCEEDED",
+          cleanedUp: savedFiles.length,
+        });
+      } else {
+        res.status(500).json({
+          success: false,
+          message: "Failed to save album",
+          error: transactionError.message,
+          cleanedUp: savedFiles.length,
+        });
+      }
+    }
+
+  } catch (error) {
+    console.error("Error in batch save album:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// ✅ S3ファイル削除用ヘルパーAPI（緊急時用）
+app.delete("/photos/cleanup-s3/:s3Key", async function (req, res) {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "*");
+
+  try {
+    const { s3Key } = req.params;
+    const { passcode } = req.body;
+
+    if (!s3Key || !passcode) {
+      return res.status(400).json({
+        success: false,
+        message: "s3Key and passcode are required",
+      });
+    }
+
+    // ユーザー確認
+    const userCheck = new GetCommand({
+      TableName: process.env.STORAGE_WEDDINGUSERS_NAME,
+      Key: { passcode: passcode }
+    });
+
+    const userResult = await docClient.send(userCheck);
+    if (!userResult.Item) {
+      return res.status(403).json({
+        success: false,
+        message: "Unauthorized",
+      });
+    }
+
+    // S3ファイル削除
+    await s3.deleteObject({
+      Bucket: process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME,
+      Key: `public/${s3Key}`
+    }).promise();
 
     res.json({
       success: true,
-      message: "Media saved successfully",
-      photoId: photoId,
-      mediaType: mediaType || "photo",
+      message: "S3 file deleted successfully",
+      s3Key: s3Key,
     });
+
   } catch (error) {
-    console.error("Error saving media:", error);
+    console.error("Error cleaning up S3:", error);
     res.status(500).json({
       success: false,
       error: error.message,
@@ -679,7 +927,7 @@ app.get("/favorites/debug/:userId/:albumId", async function (req, res) {
 
   try {
     const { userId, albumId } = req.params;
-    
+
     const favoriteId = `${userId}_album_${albumId}`;
 
     console.log(`🔍 デバッグ: favoriteId=${favoriteId}`);
