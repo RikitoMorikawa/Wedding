@@ -1117,7 +1117,6 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
                     src={selectedAlbum.photos[currentPhotoIndex]?.url}
                     className="max-w-full max-h-[80vh] object-contain mx-auto"
                     controls
-                    autoPlay
                     muted
                   />
                 ) : (
