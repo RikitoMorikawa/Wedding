@@ -2,19 +2,14 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const awsServerlessExpressMiddleware = require("aws-serverless-express/middleware");
 
-// ✅ 修正：必要なimport追加
+// ✅ 必要なimport（S3とDynamoDB両方）
 const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
-const {
-  DynamoDBDocumentClient,
-  ScanCommand,
-  QueryCommand, // ✅ 追加
-  GetCommand,
-  PutCommand,
-  DeleteCommand,
-} = require("@aws-sdk/lib-dynamodb");
+const { DynamoDBDocumentClient, ScanCommand, QueryCommand, GetCommand, PutCommand, DeleteCommand } = require("@aws-sdk/lib-dynamodb");
 
+// ✅ S3関連のimport（アップロード機能に必要）
 const { S3Client, GetObjectCommand } = require("@aws-sdk/client-s3");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
+const AWS = require("aws-sdk"); // ✅ 署名付きURL生成用
 
 // DynamoDB client setup
 const client = new DynamoDBClient({ region: process.env.TABLE_REGION });
@@ -22,6 +17,7 @@ const docClient = DynamoDBDocumentClient.from(client);
 
 // S3 client setup
 const s3Client = new S3Client({ region: process.env.TABLE_REGION });
+const s3 = new AWS.S3(); // ✅ アップロード用S3クライアント
 
 const app = express();
 app.use(bodyParser.json());
@@ -108,6 +104,116 @@ app.post("/photos/user", async function (req, res) {
     });
   } catch (error) {
     console.error("Error registering user:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+/**********************
+ * 写真・動画アップロード機能 *
+ **********************/
+
+// ✅ アップロード用署名付きURL生成
+app.post("/photos/upload-url", async function (req, res) {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "*");
+
+  try {
+    const { fileName, fileType, passcode, mediaType = "photo" } = req.body;
+
+    if (!fileName || !fileType || !passcode) {
+      return res.status(400).json({
+        success: false,
+        message: "fileName, fileType, and passcode are required",
+      });
+    }
+
+    // ファイルタイプの検証
+    const allowedPhotoTypes = ["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"];
+    const allowedVideoTypes = ["video/mp4", "video/quicktime", "video/x-msvideo", "video/webm"];
+    const allAllowedTypes = [...allowedPhotoTypes, ...allowedVideoTypes];
+
+    if (!allAllowedTypes.includes(fileType)) {
+      return res.status(400).json({
+        success: false,
+        message: "Unsupported file type",
+      });
+    }
+
+    const isVideo = allowedVideoTypes.includes(fileType);
+
+    // S3 署名付きURL生成
+    const s3Key = `${isVideo ? "videos" : "photos"}/${Date.now()}_${fileName}`;
+    const s3Params = {
+      Bucket: process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME,
+      Key: `public/${s3Key}`, // S3アップロード用にはpublicを付ける
+      ContentType: fileType,
+      Expires: 300, // 5分
+    };
+
+    const uploadURL = s3.getSignedUrl("putObject", s3Params);
+
+    res.json({
+      success: true,
+      uploadURL: uploadURL,
+      s3Key: s3Key, // DynamoDBにはpublicプレフィックスなしで保存
+      mediaType: isVideo ? "video" : "photo",
+    });
+  } catch (error) {
+    console.error("Error creating upload URL:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// ✅ アルバム保存エンドポイント
+app.post("/photos/save-album", async function (req, res) {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "*");
+
+  try {
+    const { photoId, albumId, uploadedBy, caption, s3Key, uploaderName, uploadedAt, photoIndex, totalPhotos, isMainPhoto, mediaType, fileType } = req.body;
+
+    if (!photoId || !uploadedBy || !s3Key) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing required fields: photoId, uploadedBy, s3Key",
+      });
+    }
+
+    const putCommand = new PutCommand({
+      TableName: process.env.STORAGE_PHOTOS_NAME,
+      Item: {
+        photoId: photoId,
+        albumId: albumId || photoId,
+        uploadedBy: uploadedBy,
+        uploaderName: uploaderName,
+        caption: caption || "",
+        s3Key: s3Key,
+        uploadedAt: uploadedAt,
+        photoIndex: photoIndex || 0,
+        totalPhotos: totalPhotos || 1,
+        isMainPhoto: isMainPhoto || false,
+        mediaType: mediaType || "photo",
+        fileType: fileType || "image/jpeg",
+        isPublic: true, // デフォルトで公開
+      },
+    });
+
+    await docClient.send(putCommand);
+
+    res.json({
+      success: true,
+      message: "Media saved successfully",
+      photoId: photoId,
+      mediaType: mediaType || "photo",
+    });
+  } catch (error) {
+    console.error("Error saving media:", error);
     res.status(500).json({
       success: false,
       error: error.message,
@@ -516,48 +622,6 @@ app.get("/favorites/user/:userId", async function (req, res) {
   }
 });
 
-// 写真アルバム保存エンドポイント
-app.post("/photos/album", async function (req, res) {
-  res.header("Access-Control-Allow-Origin", "*");
-  res.header("Access-Control-Allow-Headers", "*");
-
-  try {
-    const photos = req.body.photos || [];
-    const albumId = req.body.albumId;
-
-    if (!photos.length || !albumId) {
-      return res.status(400).json({
-        success: false,
-        message: "Photos array and albumId are required",
-      });
-    }
-
-    // 各写真をDynamoDBに保存
-    const savePromises = photos.map(async (photo) => {
-      const command = new PutCommand({
-        TableName: process.env.STORAGE_PHOTOS_NAME,
-        Item: photo,
-      });
-      return docClient.send(command);
-    });
-
-    await Promise.all(savePromises);
-
-    res.json({
-      success: true,
-      message: "Album saved successfully",
-      albumId: albumId,
-      photoCount: photos.length,
-    });
-  } catch (error) {
-    console.error("Error saving album:", error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-    });
-  }
-});
-
 // S3プリサインドURL生成
 app.get("/photos/presigned-url", async function (req, res) {
   res.header("Access-Control-Allow-Origin", "*");
@@ -591,6 +655,14 @@ app.get("/photos/presigned-url", async function (req, res) {
       error: error.message,
     });
   }
+});
+
+// OPTIONSリクエストの処理
+app.options("/*", function (req, res) {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "*");
+  res.header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
+  res.send();
 });
 
 app.listen(3000, function () {
