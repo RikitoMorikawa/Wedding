@@ -523,6 +523,11 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
   );
 
   // アルバム一覧を取得（メモ化）
+  // =============================================================================
+  // 🔄 PhotoGallery.tsx - fetchAlbums関数の置き換え版
+  // =============================================================================
+
+  // ✅ この関数で既存のfetchAlbums関数を完全に置き換えてください
   const fetchAlbums = useCallback(async () => {
     try {
       setLoading(true);
@@ -534,44 +539,106 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
         throw new Error(result.message || "Failed to fetch albums");
       }
 
-      const albumsWithData = await Promise.all(
+      // ✅ Step 1: 基本情報（画像URL）のみ即座に取得・表示
+      console.log("📸 基本アルバム情報を読み込み中...");
+
+      const albumsWithUrls = await Promise.all(
         result.albums.map(async (album: Album) => {
           try {
             const urlResult = await getUrl({ key: album.mainPhoto.s3Key });
-            const [favoriteCount, isFavorite] = await Promise.allSettled([
-              fetchFavoriteCount("album", album.albumId),
-              checkFavoriteStatus("album", album.albumId),
-            ]);
-
             return {
               ...album,
               mainPhotoUrl: urlResult.url.toString(),
-              favoriteCount: favoriteCount.status === "fulfilled" ? favoriteCount.value : 0,
-              isFavorite: isFavorite.status === "fulfilled" ? isFavorite.value : false,
+              favoriteCount: undefined, // 後から読み込み
+              isFavorite: undefined, // 後から読み込み
               isPublic: album.isPublic !== false,
             };
           } catch (error) {
-            console.error(`Error processing album ${album.albumId}:`, error);
-            return {
-              ...album,
-              mainPhotoUrl: undefined,
-              favoriteCount: 0,
-              isFavorite: false,
-              isPublic: true,
-            };
+            console.error(`Error getting main photo URL for album ${album.albumId}:`, error);
+            console.warn(`⚠️ URL generation failed for album ${album.albumId.substring(0, 8)}...`);
+            return null;
           }
         })
       );
 
-      const validAlbums = albumsWithData.filter((album) => album.mainPhotoUrl);
+      const validAlbums = albumsWithUrls.filter((album): album is Album => album !== null);
       const sortedAlbums = sortAlbums(validAlbums, sortType);
+
+      // ✅ 基本情報で即座に画面更新（ローディング終了）
       setAlbums(sortedAlbums);
-    } catch (error) {
-      console.error("Error fetching albums:", error);
-    } finally {
       setLoading(false);
+
+      console.log(`✅ ${sortedAlbums.length}個のアルバムを表示しました`);
+      console.log("⏳ お気に入り情報を背景で読み込み中...");
+
+      // ✅ Step 2: お気に入り情報を背景で段階的に読み込み
+      let completedCount = 0;
+
+      const loadFavoritesSequentially = async () => {
+        for (let i = 0; i < sortedAlbums.length; i += 2) {
+          // 2つずつ処理
+          const batch = sortedAlbums.slice(i, i + 2);
+
+          try {
+            const batchUpdates = await Promise.allSettled(
+              batch.map(async (album) => {
+                const [favoriteCount, isFavorite] = await Promise.allSettled([
+                  fetchFavoriteCount("album", album.albumId),
+                  checkFavoriteStatus("album", album.albumId),
+                ]);
+
+                return {
+                  albumId: album.albumId,
+                  favoriteCount: favoriteCount.status === "fulfilled" ? favoriteCount.value : 0,
+                  isFavorite: isFavorite.status === "fulfilled" ? isFavorite.value : false,
+                };
+              })
+            );
+
+            // ✅ バッチごとに状態更新
+            setAlbums((prevAlbums) =>
+              prevAlbums.map((album) => {
+                const update = batchUpdates.find((result) => result.status === "fulfilled" && result.value.albumId === album.albumId);
+
+                if (update && update.status === "fulfilled") {
+                  completedCount++;
+                  return {
+                    ...album,
+                    favoriteCount: update.value.favoriteCount,
+                    isFavorite: update.value.isFavorite,
+                  };
+                }
+                return album;
+              })
+            );
+
+            // ✅ 進捗ログ（デバッグ用）
+            console.log(`🔄 お気に入り読み込み進捗: ${Math.min(completedCount, sortedAlbums.length)}/${sortedAlbums.length}`);
+
+            // ✅ 次のバッチまで待機（サーバー負荷軽減）
+            if (i + 2 < sortedAlbums.length) {
+              await new Promise((resolve) => setTimeout(resolve, 400)); // 0.4秒待機
+            }
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          } catch (error: any) {
+            console.warn(`⚠️ お気に入り読み込みエラー (batch ${Math.floor(i / 2) + 1}):`, error?.message || 'Unknown error');
+            // エラーでも続行
+          }
+        }
+
+        console.log("✅ 全てのお気に入り情報読み込み完了！");
+      };
+
+      // 背景で非同期実行（エラーでもアプリは継続）
+      loadFavoritesSequentially().catch((error) => {
+        console.warn("⚠️ 背景お気に入り読み込みで一部エラー:", error.message);
+      });
+    } catch (error) {
+      console.error("❌ アルバム読み込みエラー:", error);
+    } finally {
+      // setLoading(false); は上で既に実行済み
     }
-  }, [API_BASE, sortType, fetchFavoriteCount, checkFavoriteStatus, sortAlbums]);
+  }, [API_BASE, sortType, fetchFavoriteCount, checkFavoriteStatus, sortAlbums, userInfo?.passcode]);
 
   // アルバム写真を読み込み（メモ化）
   const loadAlbumPhotos = useCallback(
