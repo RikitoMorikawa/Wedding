@@ -59,7 +59,6 @@ export default function Home() {
   }, []);
 
   const fetchUserInfo = async (passcode: string) => {
-    console.log("2. DynamoDB name column check - Starting for passcode:", passcode);
     if (!passcode) {
       console.error("Passcode is undefined, skipping fetch");
       return;
@@ -73,9 +72,7 @@ export default function Home() {
       const response = await restOperation.response;
       const rawData = await response.body.json();
       const data = rawData as unknown as ApiResponse;
-      console.log("DynamoDB API Response:", data);
       if (data.success && data.user && data.user.name) {
-        console.log("✅ User found with name:", data.user.name);
         setUserInfo(data.user);
       } else {
         console.log("❌ User not found or no name");
@@ -86,7 +83,6 @@ export default function Home() {
       setUserInfo(null);
     } finally {
       setUserInfoLoading(false);
-      console.log("2. DynamoDB name column check - Completed");
     }
   };
 

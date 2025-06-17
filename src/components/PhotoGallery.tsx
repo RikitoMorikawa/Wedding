@@ -302,7 +302,6 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
             // メイン写真URL取得
             try {
               const urlResult = await getUrl({ key: album.mainPhoto.s3Key });
-              console.log("Generated URL:", urlResult.url.toString());
 
               // お気に入り情報を並列取得（エラーが発生しても他の処理を続行）
               const [favoriteCount, isFavorite] = await Promise.allSettled([
@@ -318,7 +317,6 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
                 isPublic: album.isPublic !== false, // デフォルトは公開（既存データ互換性）
               };
 
-              console.log("✅ Successfully processed album:", processedAlbum.albumId);
               return processedAlbum;
             } catch (urlError) {
               console.error(`❌ Error generating URL for album ${album.albumId}:`, urlError);
@@ -364,7 +362,6 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
 
       // ソート適用
       const sortedAlbums = sortAlbums(validAlbums, sortType);
-      console.log("📋 Final albums to display:", sortedAlbums.length);
       setAlbums(sortedAlbums);
     } catch (error) {
       console.error("❌ Error fetching albums:", error);
