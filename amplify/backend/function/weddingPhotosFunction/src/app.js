@@ -518,68 +518,114 @@ app.post("/favorites", async function (req, res) {
   }
 });
 
-// ✅ 修正：特定の対象のお気に入り数を取得（GSI使用）
-app.get("/favorites/count/:targetType/:targetId", async function (req, res) {
+// バッチお気に入り情報取得API
+app.post("/favorites/batch", async function (req, res) {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Headers", "*");
 
   try {
-    const { targetType, targetId } = req.params;
+    const { userId, albumIds } = req.body;
 
-    // ✅ GSI "targetType-targetId-index" を使用した効率的なクエリ
-    const queryCommand = new QueryCommand({
-      TableName: process.env.STORAGE_FAVORITES_NAME,
-      IndexName: "targetType-targetId-index", // GSI使用
-      KeyConditionExpression: "targetType = :targetType AND targetId = :targetId",
-      ExpressionAttributeValues: {
-        ":targetType": targetType,
-        ":targetId": targetId,
-      },
-      Select: "COUNT", // 件数のみ取得で高速化
+    if (!albumIds || !Array.isArray(albumIds) || albumIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "albumIds array is required",
+      });
+    }
+
+    // バッチ処理制限（一度に処理できる上限）
+    if (albumIds.length > 100) {
+      return res.status(400).json({
+        success: false,
+        message: "Maximum 100 albums per batch",
+      });
+    }
+
+    const results = {};
+
+    // 1. お気に入り数をバッチ取得（GSIクエリ使用）
+    const countPromises = albumIds.map(async (albumId) => {
+      try {
+        const queryCommand = new QueryCommand({
+          TableName: process.env.STORAGE_FAVORITES_NAME,
+          IndexName: "targetType-targetId-index", // GSI使用
+          KeyConditionExpression: "targetType = :targetType AND targetId = :targetId",
+          ExpressionAttributeValues: {
+            ":targetType": "album",
+            ":targetId": albumId,
+          },
+          Select: "COUNT",
+        });
+        const result = await docClient.send(queryCommand);
+        return { albumId, count: result.Count || 0 };
+      } catch (error) {
+        console.error(`Count error for album ${albumId}:`, error);
+        return { albumId, count: 0 };
+      }
     });
 
-    const result = await docClient.send(queryCommand);
-    const count = result.Count || 0;
+    // 2. ユーザーのお気に入り状態をバッチ取得（BatchGetItem使用）
+    let favoriteStatuses = {};
+    if (userId) {
+      try {
+        // プライマリキーのリストを作成
+        const favoriteIds = albumIds.map(albumId => ({ favoriteId: `${userId}_album_${albumId}` }));
+        
+        // BatchGetItemは最大100件まで処理可能
+        const chunks = [];
+        for (let i = 0; i < favoriteIds.length; i += 100) {
+          chunks.push(favoriteIds.slice(i, i + 100));
+        }
+
+        for (const chunk of chunks) {
+          const batchGetCommand = new BatchGetCommand({
+            RequestItems: {
+              [process.env.STORAGE_FAVORITES_NAME]: {
+                Keys: chunk,
+                ProjectionExpression: "favoriteId, targetId"
+              }
+            }
+          });
+
+          const batchResult = await docClient.send(batchGetCommand);
+          const items = batchResult.Responses?.[process.env.STORAGE_FAVORITES_NAME] || [];
+          
+          items.forEach(item => {
+            favoriteStatuses[item.targetId] = true;
+          });
+        }
+      } catch (error) {
+        console.error("Batch favorite status error:", error);
+      }
+    }
+
+    // 3. 結果をまとめる
+    const countResults = await Promise.allSettled(countPromises);
+    
+    countResults.forEach((result, index) => {
+      if (result.status === "fulfilled") {
+        const { albumId, count } = result.value;
+        results[albumId] = {
+          favoriteCount: count,
+          isFavorite: favoriteStatuses[albumId] || false
+        };
+      } else {
+        // エラーの場合のデフォルト値
+        results[albumIds[index]] = {
+          favoriteCount: 0,
+          isFavorite: false
+        };
+      }
+    });
 
     res.json({
       success: true,
-      count: count,
+      results: results,
+      totalAlbums: albumIds.length
     });
+
   } catch (error) {
-    console.error("Error getting favorite count:", error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-    });
-  }
-});
-
-// ✅ 修正：特定ユーザーの特定対象へのお気に入り状態をチェック
-app.get("/favorites/check/:userId/:targetType/:targetId", async function (req, res) {
-  res.header("Access-Control-Allow-Origin", "*");
-  res.header("Access-Control-Allow-Headers", "*");
-
-  try {
-    const { userId, targetType, targetId } = req.params;
-    const favoriteId = `${userId}_${targetType}_${targetId}`;
-
-    // ✅ プライマリキーでの直接取得（既に効率的）
-    const getCommand = new GetCommand({
-      TableName: process.env.STORAGE_FAVORITES_NAME,
-      Key: {
-        favoriteId: favoriteId,
-      },
-    });
-
-    const result = await docClient.send(getCommand);
-    const isFavorite = !!result.Item;
-
-    res.json({
-      success: true,
-      isFavorite: isFavorite,
-    });
-  } catch (error) {
-    console.error("Error checking favorite status:", error);
+    console.error("Error in batch favorites:", error);
     res.status(500).json({
       success: false,
       error: error.message,
