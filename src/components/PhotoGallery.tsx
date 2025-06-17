@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback, memo } from "react"; // useMemo, useCallback, memoを追加
+import { useState, useEffect, useMemo, useCallback, memo, useRef } from "react";
 import { Amplify } from "aws-amplify";
 import { getUrl } from "aws-amplify/storage";
 import awsconfig from "../aws-exports";
@@ -46,14 +46,99 @@ interface PhotoGalleryProps {
   } | null;
 }
 
-// ===== 2. useVideoThumbnailフックを追加 =====
+type SortType = "date" | "favorites";
+
+// ===== デバウンスフック =====
+const useDebounce = <T,>(value: T, delay: number): T => {
+  const [debouncedValue, setDebouncedValue] = useState<T>(value);
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [value, delay]);
+
+  return debouncedValue;
+};
+
+// ===== Intersection Observer フック =====
+const useLazyLoading = (threshold: number = 0.1) => {
+  const [isVisible, setIsVisible] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setIsVisible(true);
+          observer.disconnect();
+        }
+      },
+      { threshold }
+    );
+
+    observer.observe(element);
+
+    return () => observer.disconnect();
+  }, [threshold]);
+
+  return [ref, isVisible] as const;
+};
+
+// ===== 画像プリロードフック =====
+const useImagePreloader = (imageUrls: string[], priority: number = 5) => {
+  const [loadedImages, setLoadedImages] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (imageUrls.length === 0) return;
+
+    const urlsToPreload = imageUrls.slice(0, priority);
+
+    const preloadPromises = urlsToPreload.map((url) => {
+      return new Promise<string>((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(url);
+        img.onerror = reject;
+        img.src = url;
+      });
+    });
+
+    Promise.allSettled(preloadPromises).then((results) => {
+      const loaded = new Set<string>();
+      results.forEach((result, index) => {
+        if (result.status === "fulfilled") {
+          loaded.add(urlsToPreload[index]);
+        }
+      });
+      setLoadedImages((prev) => new Set([...prev, ...loaded]));
+    });
+  }, [imageUrls, priority]);
+
+  return loadedImages;
+};
+
+// ===== 動画サムネイル生成フック（最適化版） =====
 const useVideoThumbnail = (videoUrl: string, timeStamp: number = 0.1) => {
   const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const cache = useRef<Map<string, string>>(new Map());
 
   const generateThumbnail = useCallback(async () => {
-    // videoUrlが空文字またはundefinedの場合は何もしない
     if (!videoUrl || videoUrl.trim() === "" || thumbnailUrl) return;
+
+    // キャッシュチェック
+    const cached = cache.current.get(videoUrl);
+    if (cached) {
+      setThumbnailUrl(cached);
+      return;
+    }
 
     setLoading(true);
     try {
@@ -63,17 +148,21 @@ const useVideoThumbnail = (videoUrl: string, timeStamp: number = 0.1) => {
       video.playsInline = true;
       video.preload = "metadata";
 
-      await new Promise((resolve, reject) => {
+      const dataURL = await new Promise<string>((resolve, reject) => {
+        const timeoutId = setTimeout(() => reject(new Error("Timeout")), 10000);
+
         video.onloadedmetadata = () => {
           video.currentTime = timeStamp;
         };
 
         video.onseeked = () => {
           try {
+            clearTimeout(timeoutId);
             const canvas = document.createElement("canvas");
             const ctx = canvas.getContext("2d");
 
             if (ctx) {
+              // サイズ最適化
               const maxSize = 300;
               const ratio = Math.min(maxSize / video.videoWidth, maxSize / video.videoHeight);
 
@@ -81,20 +170,27 @@ const useVideoThumbnail = (videoUrl: string, timeStamp: number = 0.1) => {
               canvas.height = video.videoHeight * ratio;
 
               ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-              const dataURL = canvas.toDataURL("image/jpeg", 0.7);
-              setThumbnailUrl(dataURL);
-              resolve(dataURL);
+              const result = canvas.toDataURL("image/jpeg", 0.7);
+              resolve(result);
             } else {
               reject(new Error("Canvas context not available"));
             }
           } catch (error) {
+            clearTimeout(timeoutId);
             reject(error);
           }
         };
 
-        video.onerror = reject;
+        video.onerror = () => {
+          clearTimeout(timeoutId);
+          reject(new Error("Video load error"));
+        };
+
         video.src = videoUrl;
       });
+
+      cache.current.set(videoUrl, dataURL);
+      setThumbnailUrl(dataURL);
     } catch (error) {
       console.error("Failed to generate thumbnail:", error);
       setThumbnailUrl(null);
@@ -110,44 +206,97 @@ const useVideoThumbnail = (videoUrl: string, timeStamp: number = 0.1) => {
   return { thumbnailUrl, loading };
 };
 
-// ===== 3. AlbumItemコンポーネントを追加 =====
-// useVideoThumbnailの直後に追加
+// ===== ローディング状態コンポーネント =====
+const LoadingState = memo(() => (
+  <div className="flex items-center justify-center py-12">
+    <div className="flex flex-col items-center space-y-4">
+      <div className="w-8 h-8 border-2 border-pink-300 border-t-pink-600 rounded-full animate-spin"></div>
+      <p className="text-gray-600">写真を読み込み中...</p>
+    </div>
+  </div>
+));
+
+LoadingState.displayName = "LoadingState";
+
+// ===== 空状態コンポーネント =====
+const EmptyState = memo(({ mediaFilter, isAlbumsEmpty = false }: { mediaFilter: "all" | "photo" | "video"; isAlbumsEmpty?: boolean }) => (
+  <div className="text-center py-12">
+    {isAlbumsEmpty ? (
+      <>
+        <div className="w-16 h-16 mx-auto mb-4 bg-gray-100 rounded-full flex items-center justify-center">
+          <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 002 2v12a2 2 0 002 2z"
+            />
+          </svg>
+        </div>
+        <h3 className="text-lg font-semibold text-gray-800 mb-2">まだ写真がありません</h3>
+        <p className="text-gray-600">最初の写真をアップロードしてみましょう！</p>
+      </>
+    ) : (
+      <>
+        <div className="text-6xl mb-4">📸</div>
+        <p className="text-gray-500 text-lg">
+          {mediaFilter === "all" ? "まだ写真がアップロードされていません" : mediaFilter === "photo" ? "写真がありません" : "動画がありません"}
+        </p>
+        <p className="text-gray-400 text-sm mt-2">
+          {mediaFilter === "all" ? "最初の思い出を共有してみましょう！" : "他のメディアタイプを確認してみてください"}
+        </p>
+      </>
+    )}
+  </div>
+));
+
+EmptyState.displayName = "EmptyState";
+
+// ===== 最適化されたアルバムアイテム =====
 const AlbumItem = memo(({ album, onClick, isOwner }: { album: Album; onClick: () => void; isOwner: (album: Album) => boolean }) => {
-  // album.mainPhotoUrlがundefinedの場合は空文字を渡す
-  const { thumbnailUrl, loading } = useVideoThumbnail(album.mainPhoto?.mediaType === "video" && album.mainPhotoUrl ? album.mainPhotoUrl : "", 0.1);
+  const [ref, isVisible] = useLazyLoading(0.1);
+
+  const { thumbnailUrl, loading } = useVideoThumbnail(album.mainPhoto?.mediaType === "video" && album.mainPhotoUrl && isVisible ? album.mainPhotoUrl : "", 0.1);
 
   const displayImage = useMemo(() => {
+    if (!isVisible) return null;
     if (album.mainPhoto?.mediaType === "video") {
       return thumbnailUrl;
     }
-    return album.mainPhotoUrl; // こちらもundefinedの可能性がある
-  }, [album.mainPhoto?.mediaType, thumbnailUrl, album.mainPhotoUrl]);
+    return album.mainPhotoUrl;
+  }, [album.mainPhoto?.mediaType, thumbnailUrl, album.mainPhotoUrl, isVisible]);
 
   return (
     <div
+      ref={ref}
       className="relative aspect-square bg-gray-100 rounded-2xl overflow-hidden cursor-pointer group hover:shadow-lg transition-all duration-200 hover:scale-105"
       onClick={onClick}
     >
-      {displayImage ? (
-        <img src={displayImage} alt={album.caption || "Wedding album"} className="w-full h-full object-cover" loading="lazy" />
-      ) : loading ? (
-        <div className="w-full h-full bg-gray-200 flex items-center justify-center">
-          <div className="w-8 h-8 border-2 border-pink-300 border-t-pink-600 rounded-full animate-spin"></div>
-        </div>
-      ) : (
-        <div className="w-full h-full bg-gray-200 flex items-center justify-center">
-          <div className="text-center">
-            <div className="w-12 h-12 bg-gray-400 rounded-full flex items-center justify-center mx-auto mb-2">
-              <svg className="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M8 5v14l11-7z" />
-              </svg>
-            </div>
-            <p className="text-xs text-gray-500">{album.mainPhoto?.mediaType === "video" ? "動画" : "画像"}</p>
+      {isVisible ? (
+        displayImage ? (
+          <img src={displayImage} alt={album.caption || "Wedding album"} className="w-full h-full object-cover" loading="lazy" decoding="async" />
+        ) : loading ? (
+          <div className="w-full h-full bg-gray-200 flex items-center justify-center">
+            <div className="w-8 h-8 border-2 border-pink-300 border-t-pink-600 rounded-full animate-spin"></div>
           </div>
-        </div>
+        ) : (
+          <div className="w-full h-full bg-gray-200 flex items-center justify-center">
+            <div className="text-center">
+              <div className="w-12 h-12 bg-gray-400 rounded-full flex items-center justify-center mx-auto mb-2">
+                <svg className="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+              </div>
+              <p className="text-xs text-gray-500">{album.mainPhoto?.mediaType === "video" ? "動画" : "画像"}</p>
+            </div>
+          </div>
+        )
+      ) : (
+        <div className="w-full h-full bg-gray-200 animate-pulse"></div>
       )}
 
-      {album.mainPhoto?.mediaType === "video" && (
+      {/* 動画アイコンオーバーレイ */}
+      {isVisible && album.mainPhoto?.mediaType === "video" && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="w-12 h-12 bg-black/60 backdrop-blur-sm rounded-full flex items-center justify-center">
             <svg className="w-6 h-6 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
@@ -157,7 +306,7 @@ const AlbumItem = memo(({ album, onClick, isOwner }: { album: Album; onClick: ()
         </div>
       )}
 
-      {/* バッジ類は既存のまま */}
+      {/* 複数枚表示のバッジ */}
       {album.totalPhotos > 1 && (
         <div className="absolute top-2 right-2">
           <div className="bg-black/70 backdrop-blur-sm rounded-lg px-2 py-1 flex items-center space-x-1">
@@ -174,6 +323,7 @@ const AlbumItem = memo(({ album, onClick, isOwner }: { album: Album; onClick: ()
         </div>
       )}
 
+      {/* 削除済みバッジ */}
       {isOwner(album) && album.isPublic === false && (
         <div className="absolute top-2 right-2 ml-1">
           <div className="bg-red-600/90 backdrop-blur-sm rounded-lg px-2 py-1 flex items-center space-x-1">
@@ -190,6 +340,7 @@ const AlbumItem = memo(({ album, onClick, isOwner }: { album: Album; onClick: ()
         </div>
       )}
 
+      {/* お気に入り件数バッジ */}
       {album.favoriteCount !== undefined && album.favoriteCount > 0 && (
         <div className="absolute top-2 left-2">
           <div className="bg-red-500/90 backdrop-blur-sm rounded-lg px-2 py-1 flex items-center space-x-1">
@@ -201,6 +352,7 @@ const AlbumItem = memo(({ album, onClick, isOwner }: { album: Album; onClick: ()
         </div>
       )}
 
+      {/* 投稿者情報 */}
       <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-3">
         <p className="text-white text-xs font-medium truncate">{album.uploaderName || album.uploadedBy}</p>
         {album.caption && <p className="text-white/80 text-xs truncate mt-1">{album.caption}</p>}
@@ -209,19 +361,17 @@ const AlbumItem = memo(({ album, onClick, isOwner }: { album: Album; onClick: ()
   );
 });
 
-AlbumItem.displayName = 'AlbumItem';
+AlbumItem.displayName = "AlbumItem";
 
-// ===== 4. ThumbnailItemコンポーネントを追加 =====
-// AlbumItemの直後に追加
+// ===== 最適化されたサムネイルアイテム =====
 const ThumbnailItem = memo(({ photo, index, isSelected, onClick }: { photo: Photo; index: number; isSelected: boolean; onClick: () => void }) => {
-  // photo.urlがundefinedの場合は空文字を渡す
   const { thumbnailUrl, loading } = useVideoThumbnail(photo.mediaType === "video" && photo.url ? photo.url : "", 0.1);
 
   const displayImage = useMemo(() => {
     if (photo.mediaType === "video") {
       return thumbnailUrl;
     }
-    return photo.url; // photo.urlはここでもundefinedの可能性がある
+    return photo.url;
   }, [photo.mediaType, thumbnailUrl, photo.url]);
 
   return (
@@ -232,7 +382,13 @@ const ThumbnailItem = memo(({ photo, index, isSelected, onClick }: { photo: Phot
       }`}
     >
       {displayImage ? (
-        <img src={displayImage} alt={`${photo.mediaType === "video" ? "動画" : "写真"} ${index + 1}`} className="w-full h-full object-cover" loading="lazy" />
+        <img
+          src={displayImage}
+          alt={`${photo.mediaType === "video" ? "動画" : "写真"} ${index + 1}`}
+          className="w-full h-full object-cover"
+          loading="lazy"
+          decoding="async"
+        />
       ) : loading ? (
         <div className="w-full h-full bg-gray-200 flex items-center justify-center rounded-lg">
           <div className="w-3 h-3 border border-white/30 border-t-white rounded-full animate-spin"></div>
@@ -260,246 +416,117 @@ const ThumbnailItem = memo(({ photo, index, isSelected, onClick }: { photo: Phot
   );
 });
 
-ThumbnailItem.displayName = 'ThumbnailItem';
+ThumbnailItem.displayName = "ThumbnailItem";
 
-// ソートタイプの定義
-type SortType = "date" | "favorites";
-
+// ===== メインコンポーネント =====
 export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryProps) {
   const [albums, setAlbums] = useState<Album[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedAlbum, setSelectedAlbum] = useState<Album | null>(null);
   const [currentPhotoIndex, setCurrentPhotoIndex] = useState(0);
   const [favoriteLoading, setFavoriteLoading] = useState(false);
-  const [sortType, setSortType] = useState<SortType>("date"); // ソートタイプを管理
-  const [visibilityLoading, setVisibilityLoading] = useState(false); // 削除/復元切り替えのローディング状態
+  const [sortType, setSortType] = useState<SortType>("date");
+  const [visibilityLoading, setVisibilityLoading] = useState(false);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [mediaFilter, setMediaFilter] = useState<"all" | "photo" | "video">("all");
 
-  // フィルター適用関数を追加
-  const filteredAlbums = useMemo(() => {
-    if (mediaFilter === "all") {
-      return albums;
-    }
-    return albums.filter((album) => album.mainPhoto?.mediaType === mediaFilter);
-  }, [albums, mediaFilter]);
+  // デバウンスフィルター
+  const debouncedMediaFilter = useDebounce(mediaFilter, 300);
 
   // API Base URL
   const API_BASE = awsconfig.aws_cloud_logic_custom[0].endpoint;
 
-  // お気に入り件数を取得（エラーハンドリング強化）
-  const fetchFavoriteCount = async (targetType: string, targetId: string): Promise<number> => {
-    try {
-      const response = await fetch(`${API_BASE}/favorites/count/${targetType}/${targetId}`);
-
-      // レスポンスステータスをチェック
-      if (!response.ok) {
-        console.warn(`Favorite count API returned ${response.status} for ${targetId}`);
-        return 0;
-      }
-
-      const result = await response.json();
-      return result.success ? result.count : 0;
-    } catch (error) {
-      console.error("Error fetching favorite count:", error);
-      return 0;
-    }
-  };
-
-  // ユーザーのお気に入り状態をチェック（エラーハンドリング強化）
-  const checkFavoriteStatus = async (targetType: string, targetId: string): Promise<boolean> => {
-    if (!userInfo?.passcode) return false;
-
-    try {
-      const response = await fetch(`${API_BASE}/favorites/check/${userInfo.passcode}/${targetType}/${targetId}`);
-
-      // レスポンスステータスをチェック
-      if (!response.ok) {
-        console.warn(`Favorite check API returned ${response.status} for ${targetId}`);
-        return false;
-      }
-
-      const result = await response.json();
-      return result.success ? result.isFavorite : false;
-    } catch (error) {
-      console.error("Error checking favorite status:", error);
-      return false;
-    }
-  };
-
-  // お気に入り追加/削除（エラーハンドリング強化）
-  const toggleFavorite = async (targetType: string, targetId: string): Promise<boolean> => {
-    if (!userInfo?.passcode) return false;
-
-    setFavoriteLoading(true);
-
-    try {
-      const currentStatus = await checkFavoriteStatus(targetType, targetId);
-      const action = currentStatus ? "remove" : "add";
-
-      const response = await fetch(`${API_BASE}/favorites`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          userId: userInfo.passcode,
-          targetType: targetType,
-          targetId: targetId,
-          action: action,
-        }),
-      });
-
-      // レスポンスステータスをチェック
-      if (!response.ok) {
-        console.warn(`Toggle favorite API returned ${response.status}`);
-        return currentStatus; // 元の状態を返す
-      }
-
-      const result = await response.json();
-
-      if (result.success) {
-        // 選択中のアルバムの状態を更新（エラーハンドリング付き）
-        if (selectedAlbum && selectedAlbum.albumId === targetId) {
-          try {
-            const [newFavoriteCount, newIsFavorite] = await Promise.allSettled([
-              fetchFavoriteCount(targetType, targetId),
-              checkFavoriteStatus(targetType, targetId),
-            ]);
-
-            setSelectedAlbum((prev) =>
-              prev
-                ? {
-                    ...prev,
-                    favoriteCount: newFavoriteCount.status === "fulfilled" ? newFavoriteCount.value : prev.favoriteCount,
-                    isFavorite: newIsFavorite.status === "fulfilled" ? newIsFavorite.value : !currentStatus,
-                  }
-                : null
-            );
-          } catch (error) {
-            console.warn("Error updating selected album favorite status:", error);
-          }
-        }
-
-        // アルバム一覧の状態も更新（非同期で実行して遅延を最小化）
-        fetchAlbums().catch((err) => console.warn("Error refreshing albums:", err));
-
-        return !currentStatus;
-      }
-
-      return currentStatus;
-    } catch (error) {
-      console.error("Error toggling favorite:", error);
-      return false;
-    } finally {
-      setFavoriteLoading(false);
-    }
-  };
-
-  // 写真の削除/復元切り替え
-  const toggleVisibility = async (albumId: string, currentStatus: boolean): Promise<boolean> => {
-    if (!userInfo?.passcode) return currentStatus;
-
-    setVisibilityLoading(true);
-
-    try {
-      const response = await fetch(`${API_BASE}/photos/album/${albumId}/visibility`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          isPublic: !currentStatus,
-          passcode: userInfo.passcode,
-        }),
-      });
-
-      if (!response.ok) {
-        console.warn(`Toggle visibility API returned ${response.status}`);
-        return currentStatus;
-      }
-
-      const result = await response.json();
-
-      if (result.success) {
-        // 選択中のアルバムの状態を更新
-        if (selectedAlbum && selectedAlbum.albumId === albumId) {
-          setSelectedAlbum((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  isPublic: !currentStatus,
-                }
-              : null
-          );
-        }
-
-        // アルバム一覧の状態も更新
-        fetchAlbums().catch((err) => console.warn("Error refreshing albums:", err));
-
-        return !currentStatus;
-      }
-
-      return currentStatus;
-    } catch (error) {
-      console.error("Error toggling visibility:", error);
-      alert("削除/復元の切り替えに失敗しました。もう一度お試しください。");
-      return currentStatus;
-    } finally {
-      setVisibilityLoading(false);
-    }
-  };
-
-  // アルバムをソートする関数
-  const sortAlbums = (albumsList: Album[], sortType: SortType): Album[] => {
+  // アルバムをソートする関数（メモ化）
+  const sortAlbums = useCallback((albumsList: Album[], sortType: SortType): Album[] => {
     const sortedAlbums = [...albumsList];
 
     switch (sortType) {
       case "favorites":
         return sortedAlbums.sort((a, b) => {
-          // お気に入り件数の多い順（降順）
           const aCount = a.favoriteCount || 0;
           const bCount = b.favoriteCount || 0;
           if (bCount !== aCount) {
             return bCount - aCount;
           }
-          // お気に入り件数が同じ場合は投稿日順（新しい順）
           return new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime();
         });
       case "date":
       default:
         return sortedAlbums.sort((a, b) => {
-          // 投稿日順（新しい順）
           return new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime();
         });
     }
-  };
+  }, []);
 
-  // 現在のユーザーが投稿者かどうかをチェック
-  const isOwner = (album: Album): boolean => {
-    return userInfo?.passcode === album.uploadedBy;
-  };
+  // フィルタリング（メモ化）
+  const filteredAlbums = useMemo(() => {
+    if (debouncedMediaFilter === "all") {
+      return albums;
+    }
+    return albums.filter((album) => album.mainPhoto?.mediaType === debouncedMediaFilter);
+  }, [albums, debouncedMediaFilter]);
 
-  // 確認ダイアログでOKを選択した場合
-  const handleConfirmClose = () => {
-    setShowConfirmDialog(false);
-    setSelectedAlbum(null);
-  };
+  // ソート済みアルバム（メモ化）
+  const sortedFilteredAlbums = useMemo(() => {
+    return sortAlbums(filteredAlbums, sortType);
+  }, [filteredAlbums, sortType, sortAlbums]);
 
-  // 確認ダイアログでキャンセルを選択した場合
-  const handleCancelClose = () => {
-    setShowConfirmDialog(false);
-    // モーダルは開いたまま
-  };
+  // プリロード用の画像URL（メモ化）
+  const imageUrls = useMemo(() => {
+    return sortedFilteredAlbums
+      .slice(0, 10)
+      .map((album) => album.mainPhotoUrl)
+      .filter(Boolean) as string[];
+  }, [sortedFilteredAlbums]);
 
-  // アルバム一覧を取得（お気に入り情報付き・エラーハンドリング強化）
-  // PhotoGallery.tsx の fetchAlbums 関数を以下に置き換えてください
+  // 画像プリロード
+  useImagePreloader(imageUrls, 5);
 
-  const fetchAlbums = async () => {
+  // お気に入り件数を取得（メモ化）
+  const fetchFavoriteCount = useCallback(
+    async (targetType: string, targetId: string): Promise<number> => {
+      try {
+        const response = await fetch(`${API_BASE}/favorites/count/${targetType}/${targetId}`);
+        if (!response.ok) {
+          console.warn(`Favorite count API returned ${response.status} for ${targetId}`);
+          return 0;
+        }
+        const result = await response.json();
+        return result.success ? result.count : 0;
+      } catch (error) {
+        console.error("Error fetching favorite count:", error);
+        return 0;
+      }
+    },
+    [API_BASE]
+  );
+
+  // お気に入り状態をチェック（メモ化）
+  const checkFavoriteStatus = useCallback(
+    async (targetType: string, targetId: string): Promise<boolean> => {
+      if (!userInfo?.passcode) return false;
+
+      try {
+        const response = await fetch(`${API_BASE}/favorites/check/${userInfo.passcode}/${targetType}/${targetId}`);
+        if (!response.ok) {
+          console.warn(`Favorite check API returned ${response.status} for ${targetId}`);
+          return false;
+        }
+        const result = await response.json();
+        return result.success ? result.isFavorite : false;
+      } catch (error) {
+        console.error("Error checking favorite status:", error);
+        return false;
+      }
+    },
+    [API_BASE, userInfo?.passcode]
+  );
+
+  // アルバム一覧を取得（メモ化）
+  const fetchAlbums = useCallback(async () => {
     try {
       setLoading(true);
 
-      // DynamoDBからアルバムデータを取得
       const response = await fetch(`${API_BASE}/photos/albums`);
       const result = await response.json();
 
@@ -507,203 +534,261 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
         throw new Error(result.message || "Failed to fetch albums");
       }
 
-      // 各アルバムのメイン写真URLとお気に入り情報を取得
       const albumsWithData = await Promise.all(
         result.albums.map(async (album: Album) => {
           try {
-            // メイン写真URL取得
-            try {
-              const urlResult = await getUrl({ key: album.mainPhoto.s3Key });
+            const urlResult = await getUrl({ key: album.mainPhoto.s3Key });
+            const [favoriteCount, isFavorite] = await Promise.allSettled([
+              fetchFavoriteCount("album", album.albumId),
+              checkFavoriteStatus("album", album.albumId),
+            ]);
 
-              // お気に入り情報を並列取得（エラーが発生しても他の処理を続行）
-              const [favoriteCount, isFavorite] = await Promise.allSettled([
-                fetchFavoriteCount("album", album.albumId),
-                checkFavoriteStatus("album", album.albumId),
-              ]);
-
-              const processedAlbum = {
-                ...album,
-                mainPhotoUrl: urlResult.url.toString(),
-                favoriteCount: favoriteCount.status === "fulfilled" ? favoriteCount.value : 0,
-                isFavorite: isFavorite.status === "fulfilled" ? isFavorite.value : false,
-                isPublic: album.isPublic !== false, // デフォルトは公開（既存データ互換性）
-              };
-
-              return processedAlbum;
-            } catch (urlError) {
-              console.error(`❌ Error generating URL for album ${album.albumId}:`, urlError);
-              console.error("S3 Key that failed:", album.mainPhoto.s3Key);
-
-              // URL生成に失敗したアルバムはundefinedのmainPhotoUrlを持つ
-              return {
-                ...album,
-                mainPhotoUrl: undefined,
-                favoriteCount: 0,
-                isFavorite: false,
-                isPublic: true, // デフォルトは公開
-              };
-            }
+            return {
+              ...album,
+              mainPhotoUrl: urlResult.url.toString(),
+              favoriteCount: favoriteCount.status === "fulfilled" ? favoriteCount.value : 0,
+              isFavorite: isFavorite.status === "fulfilled" ? isFavorite.value : false,
+              isPublic: album.isPublic !== false,
+            };
           } catch (error) {
-            console.error("❌ Error getting album data for", album.albumId, ":", error);
+            console.error(`Error processing album ${album.albumId}:`, error);
             return {
               ...album,
               mainPhotoUrl: undefined,
               favoriteCount: 0,
               isFavorite: false,
-              isPublic: true, // デフォルトは公開
+              isPublic: true,
             };
           }
         })
       );
 
-      // 失敗したアルバムの詳細をログ出力
-      const failedAlbums = albumsWithData.filter((album) => !album.mainPhotoUrl);
-      if (failedAlbums.length > 0) {
-        console.log(
-          "❌ Failed albums:",
-          failedAlbums.map((album) => ({
-            albumId: album.albumId,
-            s3Key: album.mainPhoto?.s3Key,
-            mediaType: album.mainPhoto?.mediaType,
-          }))
-        );
-      }
-
-      // メイン写真URLが取得できたアルバムのみを表示
       const validAlbums = albumsWithData.filter((album) => album.mainPhotoUrl);
-
-      // ソート適用
       const sortedAlbums = sortAlbums(validAlbums, sortType);
       setAlbums(sortedAlbums);
     } catch (error) {
-      console.error("❌ Error fetching albums:", error);
+      console.error("Error fetching albums:", error);
     } finally {
       setLoading(false);
     }
-  };
+  }, [API_BASE, sortType, fetchFavoriteCount, checkFavoriteStatus, sortAlbums]);
 
-  // 選択されたアルバムの全写真URLとお気に入り情報を取得
-  const loadAlbumPhotos = async (album: Album) => {
-    try {
-      const photosWithUrls = await Promise.all(
-        album.photos.map(async (photo) => {
-          try {
-            const urlResult = await getUrl({ key: photo.s3Key });
-            return {
-              ...photo,
-              url: urlResult.url.toString(),
-            };
-          } catch (error) {
-            console.error("Error getting photo URL:", error);
-            return {
-              ...photo,
-              url: undefined,
-            };
+  // アルバム写真を読み込み（メモ化）
+  const loadAlbumPhotos = useCallback(
+    async (album: Album) => {
+      try {
+        const photosWithUrls = await Promise.all(
+          album.photos.map(async (photo) => {
+            try {
+              const urlResult = await getUrl({ key: photo.s3Key });
+              return { ...photo, url: urlResult.url.toString() };
+            } catch (error) {
+              console.error("Error getting photo URL:", error);
+              return { ...photo, url: undefined };
+            }
+          })
+        );
+
+        const validPhotos = photosWithUrls.filter((photo) => photo.url);
+        const favoriteCount = await fetchFavoriteCount("album", album.albumId);
+        const isFavorite = await checkFavoriteStatus("album", album.albumId);
+
+        setSelectedAlbum({
+          ...album,
+          photos: validPhotos,
+          favoriteCount: favoriteCount,
+          isFavorite: isFavorite,
+          isPublic: album.isPublic !== false,
+        });
+        setCurrentPhotoIndex(0);
+      } catch (error) {
+        console.error("Error loading album photos:", error);
+      }
+    },
+    [fetchFavoriteCount, checkFavoriteStatus]
+  );
+
+  // お気に入り切り替え（メモ化）
+  const toggleFavorite = useCallback(
+    async (targetType: string, targetId: string): Promise<boolean> => {
+      if (!userInfo?.passcode) return false;
+
+      setFavoriteLoading(true);
+
+      try {
+        const currentStatus = await checkFavoriteStatus(targetType, targetId);
+        const action = currentStatus ? "remove" : "add";
+
+        const response = await fetch(`${API_BASE}/favorites`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: userInfo.passcode,
+            targetType: targetType,
+            targetId: targetId,
+            action: action,
+          }),
+        });
+
+        if (!response.ok) {
+          console.warn(`Toggle favorite API returned ${response.status}`);
+          return currentStatus;
+        }
+
+        const result = await response.json();
+
+        if (result.success) {
+          if (selectedAlbum && selectedAlbum.albumId === targetId) {
+            try {
+              const [newFavoriteCount, newIsFavorite] = await Promise.allSettled([
+                fetchFavoriteCount(targetType, targetId),
+                checkFavoriteStatus(targetType, targetId),
+              ]);
+
+              setSelectedAlbum((prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      favoriteCount: newFavoriteCount.status === "fulfilled" ? newFavoriteCount.value : prev.favoriteCount,
+                      isFavorite: newIsFavorite.status === "fulfilled" ? newIsFavorite.value : !currentStatus,
+                    }
+                  : null
+              );
+            } catch (error) {
+              console.warn("Error updating selected album favorite status:", error);
+            }
           }
-        })
-      );
 
-      const validPhotos = photosWithUrls.filter((photo) => photo.url);
+          fetchAlbums().catch((err) => console.warn("Error refreshing albums:", err));
+          return !currentStatus;
+        }
 
-      // お気に入り情報を取得
-      const favoriteCount = await fetchFavoriteCount("album", album.albumId);
-      const isFavorite = await checkFavoriteStatus("album", album.albumId);
+        return currentStatus;
+      } catch (error) {
+        console.error("Error toggling favorite:", error);
+        return false;
+      } finally {
+        setFavoriteLoading(false);
+      }
+    },
+    [userInfo?.passcode, API_BASE, checkFavoriteStatus, selectedAlbum, fetchFavoriteCount, fetchAlbums]
+  );
 
-      setSelectedAlbum({
-        ...album,
-        photos: validPhotos,
-        favoriteCount: favoriteCount,
-        isFavorite: isFavorite,
-        isPublic: album.isPublic !== false, // デフォルトは公開
-      });
-      setCurrentPhotoIndex(0);
-    } catch (error) {
-      console.error("Error loading album photos:", error);
-    }
-  };
+  // 表示切り替え（メモ化）
+  const toggleVisibility = useCallback(
+    async (albumId: string, currentStatus: boolean): Promise<boolean> => {
+      if (!userInfo?.passcode) return currentStatus;
 
-  const handleAlbumClick = useCallback((album: Album) => {
-    loadAlbumPhotos(album);
-  }, []);
+      setVisibilityLoading(true);
+
+      try {
+        const response = await fetch(`${API_BASE}/photos/album/${albumId}/visibility`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            isPublic: !currentStatus,
+            passcode: userInfo.passcode,
+          }),
+        });
+
+        if (!response.ok) {
+          console.warn(`Toggle visibility API returned ${response.status}`);
+          return currentStatus;
+        }
+
+        const result = await response.json();
+
+        if (result.success) {
+          if (selectedAlbum && selectedAlbum.albumId === albumId) {
+            setSelectedAlbum((prev) => (prev ? { ...prev, isPublic: !currentStatus } : null));
+          }
+
+          fetchAlbums().catch((err) => console.warn("Error refreshing albums:", err));
+          return !currentStatus;
+        }
+
+        return currentStatus;
+      } catch (error) {
+        console.error("Error toggling visibility:", error);
+        alert("削除/復元の切り替えに失敗しました。もう一度お試しください。");
+        return currentStatus;
+      } finally {
+        setVisibilityLoading(false);
+      }
+    },
+    [userInfo?.passcode, API_BASE, selectedAlbum, fetchAlbums]
+  );
+
+  // ユーザー権限チェック（メモ化）
+  const isOwner = useCallback(
+    (album: Album): boolean => {
+      return userInfo?.passcode === album.uploadedBy;
+    },
+    [userInfo?.passcode]
+  );
+
+  // イベントハンドラー（メモ化）
+  const handleAlbumClick = useCallback(
+    (album: Album) => {
+      loadAlbumPhotos(album);
+    },
+    [loadAlbumPhotos]
+  );
 
   const handleThumbnailClick = useCallback((index: number) => {
     setCurrentPhotoIndex(index);
   }, []);
 
-  const nextPhoto = () => {
-    if (selectedAlbum && currentPhotoIndex < selectedAlbum.photos.length - 1) {
-      setCurrentPhotoIndex(currentPhotoIndex + 1);
-    }
-  };
-
-  const prevPhoto = () => {
-    if (currentPhotoIndex > 0) {
-      setCurrentPhotoIndex(currentPhotoIndex - 1);
-    }
-  };
-
-  // ソートタイプが変更されたときにアルバムを再ソート
-  const handleSortChange = (newSortType: SortType) => {
+  const handleSortChange = useCallback((newSortType: SortType) => {
     setSortType(newSortType);
-    const sortedAlbums = sortAlbums(albums, newSortType);
-    setAlbums(sortedAlbums);
-  };
+  }, []);
 
-  // モーダルを閉じる際の確認処理
-  const handleCloseModal = () => {
-    // 削除済み（isPublic=false）の写真の場合は確認ダイアログを表示
+  const handleCloseModal = useCallback(() => {
     if (selectedAlbum && selectedAlbum.isPublic === false && isOwner(selectedAlbum)) {
       setShowConfirmDialog(true);
     } else {
-      // 通常の場合はそのまま閉じる
       setSelectedAlbum(null);
     }
-  };
+  }, [selectedAlbum, isOwner]);
 
+  const handleConfirmClose = useCallback(() => {
+    setShowConfirmDialog(false);
+    setSelectedAlbum(null);
+  }, []);
+
+  const handleCancelClose = useCallback(() => {
+    setShowConfirmDialog(false);
+  }, []);
+
+  const nextPhoto = useCallback(() => {
+    if (selectedAlbum && currentPhotoIndex < selectedAlbum.photos.length - 1) {
+      setCurrentPhotoIndex(currentPhotoIndex + 1);
+    }
+  }, [selectedAlbum, currentPhotoIndex]);
+
+  const prevPhoto = useCallback(() => {
+    if (currentPhotoIndex > 0) {
+      setCurrentPhotoIndex(currentPhotoIndex - 1);
+    }
+  }, [currentPhotoIndex]);
+
+  // エフェクト
   useEffect(() => {
     fetchAlbums();
-  }, [refreshTrigger, userInfo]);
+  }, [fetchAlbums, refreshTrigger]);
 
-  // ソートタイプが変更されたときに再ソート
-  useEffect(() => {
-    if (albums.length > 0) {
-      const sortedAlbums = sortAlbums(albums, sortType);
-      setAlbums(sortedAlbums);
-    }
-  }, [sortType]);
-
+  // レンダリング
   if (loading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <div className="flex flex-col items-center space-y-4">
-          <div className="w-8 h-8 border-2 border-pink-300 border-t-pink-600 rounded-full animate-spin"></div>
-          <p className="text-gray-600">写真を読み込み中...</p>
-        </div>
-      </div>
-    );
+    return <LoadingState />;
   }
 
   if (albums.length === 0) {
-    return (
-      <div className="text-center py-12">
-        <div className="w-16 h-16 mx-auto mb-4 bg-gray-100 rounded-full flex items-center justify-center">
-          <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 002 2v12a2 2 0 002 2z"
-            />
-          </svg>
-        </div>
-        <h3 className="text-lg font-semibold text-gray-800 mb-2">まだ写真がありません</h3>
-        <p className="text-gray-600">最初の写真をアップロードしてみましょう！</p>
-      </div>
-    );
+    return <EmptyState mediaFilter={mediaFilter} isAlbumsEmpty={true} />;
   }
 
   return (
     <>
+      {/* フィルターヘッダー */}
       <div className="sticky top-0 z-10 bg-white/95 backdrop-blur-md border-b border-gray-200/50 px-4 py-3">
         <div className="flex justify-center space-x-2">
           <button
@@ -748,7 +833,8 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
           </button>
         </div>
       </div>
-      {/* 固定ソート切り替えボタン（画面左下・1行2列） */}
+
+      {/* ソートボタン */}
       <div className="fixed bottom-4 left-4 z-40">
         <div className="bg-white rounded-lg shadow-lg border p-1 flex">
           <button
@@ -784,28 +870,21 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
           </button>
         </div>
       </div>
-      {/* アルバム一覧表示 */}
-      {filteredAlbums.length === 0 ? (
-        <div className="text-center py-12">
-          <div className="text-6xl mb-4">📸</div>
-          <p className="text-gray-500 text-lg">
-            {mediaFilter === "all" ? "まだ写真がアップロードされていません" : mediaFilter === "photo" ? "写真がありません" : "動画がありません"}
-          </p>
-          <p className="text-gray-400 text-sm mt-2">
-            {mediaFilter === "all" ? "最初の思い出を共有してみましょう！" : "他のメディアタイプを確認してみてください"}
-          </p>
-        </div>
+
+      {/* アルバム一覧 */}
+      {sortedFilteredAlbums.length === 0 ? (
+        <EmptyState mediaFilter={mediaFilter} />
       ) : (
         <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2 mx-2 mt-2 pb-20">
-          {filteredAlbums.map((album) => (
+          {sortedFilteredAlbums.map((album) => (
             <AlbumItem key={album.albumId} album={album} onClick={() => handleAlbumClick(album)} isOwner={isOwner} />
           ))}
         </div>
       )}
-      {/* アルバム詳細表示モーダル（フルスクリーン・スクロール対応） */}
+
+      {/* モーダル */}
       {selectedAlbum && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 overflow-y-auto">
-          {/* メインコンテンツエリア */}
           <div className="max-w-4xl mx-auto">
             {/* ヘッダー */}
             <div className="flex justify-between items-center p-4">
@@ -827,9 +906,8 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
                 </p>
               </div>
 
-              {/* 右側：公開/非公開ボタン、お気に入りボタン、閉じるボタン */}
               <div className="flex items-center space-x-3">
-                {/* 削除/復元切り替えボタン（自分の投稿のみ） */}
+                {/* 削除/復元ボタン */}
                 {isOwner(selectedAlbum) && (
                   <button
                     onClick={() => toggleVisibility(selectedAlbum.albumId, selectedAlbum.isPublic !== false)}
@@ -898,13 +976,9 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
                 </button>
               </div>
             </div>
-          </div>
 
-          {/* メインコンテンツエリア */}
-          <div className="max-w-4xl mx-auto">
-            {/* 写真表示エリア */}
+            {/* メイン表示 */}
             <div className="relative px-4 py-2 flex items-center justify-center">
-              {/* メイン写真 */}
               <div className="relative max-w-full">
                 {selectedAlbum.photos[currentPhotoIndex]?.mediaType === "video" ? (
                   <video
@@ -922,7 +996,7 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
                   />
                 )}
 
-                {/* 前の写真ボタン */}
+                {/* ナビゲーション */}
                 {selectedAlbum.totalPhotos > 1 && currentPhotoIndex > 0 && (
                   <button
                     onClick={prevPhoto}
@@ -934,7 +1008,6 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
                   </button>
                 )}
 
-                {/* 次の写真ボタン */}
                 {selectedAlbum.totalPhotos > 1 && currentPhotoIndex < selectedAlbum.totalPhotos - 1 && (
                   <button
                     onClick={nextPhoto}
@@ -947,7 +1020,8 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
                 )}
               </div>
             </div>
-            {/* サムネイル表示（複数枚の場合） */}
+
+            {/* サムネイル */}
             {selectedAlbum.totalPhotos > 1 && (
               <div className="px-4 py-2">
                 <div className="max-w-4xl mx-auto">
@@ -968,7 +1042,7 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
               </div>
             )}
 
-            {/* キャプション表示（写真の下） */}
+            {/* キャプション */}
             {selectedAlbum.caption && (
               <div className="px-4 py-4">
                 <div className="bg-gradient-to-r from-pink-500/90 to-rose-500/90 backdrop-blur-sm rounded-2xl px-2 py-4 shadow-lg max-w-2xl mx-auto">
@@ -979,6 +1053,7 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
           </div>
         </div>
       )}
+
       {/* 確認ダイアログ */}
       <ConfirmDialog isOpen={showConfirmDialog} onConfirm={handleConfirmClose} onCancel={handleCancelClose} />
     </>
