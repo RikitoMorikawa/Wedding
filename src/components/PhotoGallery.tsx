@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useCallback, memo } from "react"; // useMemo, useCallback, memoを追加
 import { Amplify } from "aws-amplify";
 import { getUrl } from "aws-amplify/storage";
 import awsconfig from "../aws-exports";
@@ -46,6 +46,222 @@ interface PhotoGalleryProps {
   } | null;
 }
 
+// ===== 2. useVideoThumbnailフックを追加 =====
+const useVideoThumbnail = (videoUrl: string, timeStamp: number = 0.1) => {
+  const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const generateThumbnail = useCallback(async () => {
+    // videoUrlが空文字またはundefinedの場合は何もしない
+    if (!videoUrl || videoUrl.trim() === "" || thumbnailUrl) return;
+
+    setLoading(true);
+    try {
+      const video = document.createElement("video");
+      video.crossOrigin = "anonymous";
+      video.muted = true;
+      video.playsInline = true;
+      video.preload = "metadata";
+
+      await new Promise((resolve, reject) => {
+        video.onloadedmetadata = () => {
+          video.currentTime = timeStamp;
+        };
+
+        video.onseeked = () => {
+          try {
+            const canvas = document.createElement("canvas");
+            const ctx = canvas.getContext("2d");
+
+            if (ctx) {
+              const maxSize = 300;
+              const ratio = Math.min(maxSize / video.videoWidth, maxSize / video.videoHeight);
+
+              canvas.width = video.videoWidth * ratio;
+              canvas.height = video.videoHeight * ratio;
+
+              ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+              const dataURL = canvas.toDataURL("image/jpeg", 0.7);
+              setThumbnailUrl(dataURL);
+              resolve(dataURL);
+            } else {
+              reject(new Error("Canvas context not available"));
+            }
+          } catch (error) {
+            reject(error);
+          }
+        };
+
+        video.onerror = reject;
+        video.src = videoUrl;
+      });
+    } catch (error) {
+      console.error("Failed to generate thumbnail:", error);
+      setThumbnailUrl(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [videoUrl, timeStamp, thumbnailUrl]);
+
+  useEffect(() => {
+    generateThumbnail();
+  }, [generateThumbnail]);
+
+  return { thumbnailUrl, loading };
+};
+
+// ===== 3. AlbumItemコンポーネントを追加 =====
+// useVideoThumbnailの直後に追加
+const AlbumItem = memo(({ album, onClick, isOwner }: { album: Album; onClick: () => void; isOwner: (album: Album) => boolean }) => {
+  // album.mainPhotoUrlがundefinedの場合は空文字を渡す
+  const { thumbnailUrl, loading } = useVideoThumbnail(album.mainPhoto?.mediaType === "video" && album.mainPhotoUrl ? album.mainPhotoUrl : "", 0.1);
+
+  const displayImage = useMemo(() => {
+    if (album.mainPhoto?.mediaType === "video") {
+      return thumbnailUrl;
+    }
+    return album.mainPhotoUrl; // こちらもundefinedの可能性がある
+  }, [album.mainPhoto?.mediaType, thumbnailUrl, album.mainPhotoUrl]);
+
+  return (
+    <div
+      className="relative aspect-square bg-gray-100 rounded-2xl overflow-hidden cursor-pointer group hover:shadow-lg transition-all duration-200 hover:scale-105"
+      onClick={onClick}
+    >
+      {displayImage ? (
+        <img src={displayImage} alt={album.caption || "Wedding album"} className="w-full h-full object-cover" loading="lazy" />
+      ) : loading ? (
+        <div className="w-full h-full bg-gray-200 flex items-center justify-center">
+          <div className="w-8 h-8 border-2 border-pink-300 border-t-pink-600 rounded-full animate-spin"></div>
+        </div>
+      ) : (
+        <div className="w-full h-full bg-gray-200 flex items-center justify-center">
+          <div className="text-center">
+            <div className="w-12 h-12 bg-gray-400 rounded-full flex items-center justify-center mx-auto mb-2">
+              <svg className="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+            </div>
+            <p className="text-xs text-gray-500">{album.mainPhoto?.mediaType === "video" ? "動画" : "画像"}</p>
+          </div>
+        </div>
+      )}
+
+      {album.mainPhoto?.mediaType === "video" && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="w-12 h-12 bg-black/60 backdrop-blur-sm rounded-full flex items-center justify-center">
+            <svg className="w-6 h-6 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M8 5v14l11-7z" />
+            </svg>
+          </div>
+        </div>
+      )}
+
+      {/* バッジ類は既存のまま */}
+      {album.totalPhotos > 1 && (
+        <div className="absolute top-2 right-2">
+          <div className="bg-black/70 backdrop-blur-sm rounded-lg px-2 py-1 flex items-center space-x-1">
+            <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012 2v2M7 7h10"
+              />
+            </svg>
+            <span className="text-white text-xs font-medium">{album.totalPhotos}</span>
+          </div>
+        </div>
+      )}
+
+      {isOwner(album) && album.isPublic === false && (
+        <div className="absolute top-2 right-2 ml-1">
+          <div className="bg-red-600/90 backdrop-blur-sm rounded-lg px-2 py-1 flex items-center space-x-1">
+            <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+              />
+            </svg>
+            <span className="text-white text-xs font-medium">削除済み</span>
+          </div>
+        </div>
+      )}
+
+      {album.favoriteCount !== undefined && album.favoriteCount > 0 && (
+        <div className="absolute top-2 left-2">
+          <div className="bg-red-500/90 backdrop-blur-sm rounded-lg px-2 py-1 flex items-center space-x-1">
+            <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+            </svg>
+            <span className="text-white text-xs font-medium">{album.favoriteCount}</span>
+          </div>
+        </div>
+      )}
+
+      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-3">
+        <p className="text-white text-xs font-medium truncate">{album.uploaderName || album.uploadedBy}</p>
+        {album.caption && <p className="text-white/80 text-xs truncate mt-1">{album.caption}</p>}
+      </div>
+    </div>
+  );
+});
+
+AlbumItem.displayName = 'AlbumItem';
+
+// ===== 4. ThumbnailItemコンポーネントを追加 =====
+// AlbumItemの直後に追加
+const ThumbnailItem = memo(({ photo, index, isSelected, onClick }: { photo: Photo; index: number; isSelected: boolean; onClick: () => void }) => {
+  // photo.urlがundefinedの場合は空文字を渡す
+  const { thumbnailUrl, loading } = useVideoThumbnail(photo.mediaType === "video" && photo.url ? photo.url : "", 0.1);
+
+  const displayImage = useMemo(() => {
+    if (photo.mediaType === "video") {
+      return thumbnailUrl;
+    }
+    return photo.url; // photo.urlはここでもundefinedの可能性がある
+  }, [photo.mediaType, thumbnailUrl, photo.url]);
+
+  return (
+    <button
+      onClick={onClick}
+      className={`relative flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 transition-all ${
+        isSelected ? "border-pink-400 scale-110 shadow-lg" : "border-white/30 hover:border-white/60 hover:scale-105"
+      }`}
+    >
+      {displayImage ? (
+        <img src={displayImage} alt={`${photo.mediaType === "video" ? "動画" : "写真"} ${index + 1}`} className="w-full h-full object-cover" loading="lazy" />
+      ) : loading ? (
+        <div className="w-full h-full bg-gray-200 flex items-center justify-center rounded-lg">
+          <div className="w-3 h-3 border border-white/30 border-t-white rounded-full animate-spin"></div>
+        </div>
+      ) : (
+        <div className="w-full h-full bg-gray-200 flex items-center justify-center rounded-lg">
+          <div className="w-4 h-4 bg-black/60 rounded-full flex items-center justify-center">
+            <svg className="w-2 h-2 text-white ml-0.1" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M8 5v14l11-7z" />
+            </svg>
+          </div>
+        </div>
+      )}
+
+      {photo.mediaType === "video" && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="w-4 h-4 bg-black/60 rounded-full flex items-center justify-center">
+            <svg className="w-2 h-2 text-white ml-0.1" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M8 5v14l11-7z" />
+            </svg>
+          </div>
+        </div>
+      )}
+    </button>
+  );
+});
+
+ThumbnailItem.displayName = 'ThumbnailItem';
+
 // ソートタイプの定義
 type SortType = "date" | "favorites";
 
@@ -61,16 +277,12 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
   const [mediaFilter, setMediaFilter] = useState<"all" | "photo" | "video">("all");
 
   // フィルター適用関数を追加
-  const getFilteredAlbums = () => {
+  const filteredAlbums = useMemo(() => {
     if (mediaFilter === "all") {
       return albums;
     }
-
-    return albums.filter((album) => {
-      // アルバムのメイン写真のmediaTypeでフィルタリング
-      return album.mainPhoto?.mediaType === mediaFilter;
-    });
-  };
+    return albums.filter((album) => album.mainPhoto?.mediaType === mediaFilter);
+  }, [albums, mediaFilter]);
 
   // API Base URL
   const API_BASE = awsconfig.aws_cloud_logic_custom[0].endpoint;
@@ -410,6 +622,14 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
     }
   };
 
+  const handleAlbumClick = useCallback((album: Album) => {
+    loadAlbumPhotos(album);
+  }, []);
+
+  const handleThumbnailClick = useCallback((index: number) => {
+    setCurrentPhotoIndex(index);
+  }, []);
+
   const nextPhoto = () => {
     if (selectedAlbum && currentPhotoIndex < selectedAlbum.photos.length - 1) {
       setCurrentPhotoIndex(currentPhotoIndex + 1);
@@ -420,10 +640,6 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
     if (currentPhotoIndex > 0) {
       setCurrentPhotoIndex(currentPhotoIndex - 1);
     }
-  };
-
-  const goToPhoto = (index: number) => {
-    setCurrentPhotoIndex(index);
   };
 
   // ソートタイプが変更されたときにアルバムを再ソート
@@ -569,7 +785,7 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
         </div>
       </div>
       {/* アルバム一覧表示 */}
-      {getFilteredAlbums().length === 0 ? (
+      {filteredAlbums.length === 0 ? (
         <div className="text-center py-12">
           <div className="text-6xl mb-4">📸</div>
           <p className="text-gray-500 text-lg">
@@ -581,130 +797,8 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
         </div>
       ) : (
         <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2 mx-2 mt-2 pb-20">
-          {getFilteredAlbums().map((album) => (
-            <div
-              key={album.albumId}
-              className="relative aspect-square bg-gray-100 rounded-2xl overflow-hidden cursor-pointer group hover:shadow-lg transition-all duration-200 hover:scale-105"
-              onClick={() => loadAlbumPhotos(album)}
-            >
-              {/* メイン画像/動画の表示 */}
-              {album.mainPhoto?.mediaType === "video" ? (
-                <div className="relative w-full h-full">
-                  <video
-                    src={album.mainPhotoUrl}
-                    className="w-full h-full object-cover"
-                    muted
-                    playsInline
-                    preload="metadata"
-                    poster={album.mainPhotoUrl + "#t=0.1"}
-                    onLoadedMetadata={(e) => {
-                      const video = e.target as HTMLVideoElement;
-                      video.currentTime = 0.1;
-                      video.pause(); // 強制停止
-                    }}
-                    onTimeUpdate={(e) => {
-                      const video = e.target as HTMLVideoElement;
-                      // 0.1秒を超えたら強制的に停止
-                      if (video.currentTime > 0.1) {
-                        video.currentTime = 0.1;
-                        video.pause();
-                      }
-                    }}
-                    onPlay={(e) => {
-                      // 再生されそうになったら即座に停止
-                      const video = e.target as HTMLVideoElement;
-                      video.pause();
-                      video.currentTime = 0.1;
-                    }}
-                    onError={(e) => {
-                      // エラー時のフォールバック
-                      const video = e.target as HTMLVideoElement;
-                      const parent = video.parentElement;
-                      if (parent) {
-                        parent.innerHTML = `
-            <div class="w-full h-full bg-gray-200 flex items-center justify-center">
-              <div class="text-center">
-                <div class="w-12 h-12 bg-gray-400 rounded-full flex items-center justify-center mx-auto mb-2">
-                  <svg class="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M8 5v14l11-7z"/>
-                  </svg>
-                </div>
-                <p class="text-xs text-gray-500">動画</p>
-              </div>
-            </div>
-          `;
-                      }
-                    }}
-                  />
-
-                  {/* 動画アイコンオーバーレイ */}
-                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                    <div className="w-12 h-12 bg-black/60 backdrop-blur-sm rounded-full flex items-center justify-center">
-                      <svg className="w-6 h-6 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
-                        <path d="M8 5v14l11-7z" />
-                      </svg>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <img src={album.mainPhotoUrl} alt={album.caption || "Wedding album"} className="w-full h-full object-cover" />
-              )}
-
-              {/* 複数枚表示のバッジ */}
-              {album.totalPhotos > 1 && (
-                <div className="absolute top-2 right-2">
-                  <div className="bg-black/70 backdrop-blur-sm rounded-lg px-2 py-1 flex items-center space-x-1">
-                    <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012 2v2M7 7h10"
-                      />
-                    </svg>
-                    <span className="text-white text-xs font-medium">{album.totalPhotos}</span>
-                  </div>
-                </div>
-              )}
-
-              {/* 自分の投稿の場合の削除済みバッジ */}
-              {isOwner(album) && album.isPublic === false && (
-                <div className="absolute top-2 right-2 ml-1">
-                  <div className="bg-red-600/90 backdrop-blur-sm rounded-lg px-2 py-1 flex items-center space-x-1">
-                    <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                      />
-                    </svg>
-                    <span className="text-white text-xs font-medium">削除済み</span>
-                  </div>
-                </div>
-              )}
-
-              {/* お気に入り件数バッジ */}
-              {album.favoriteCount !== undefined && album.favoriteCount > 0 && (
-                <div className="absolute top-2 left-2">
-                  <div className="bg-red-500/90 backdrop-blur-sm rounded-lg px-2 py-1 flex items-center space-x-1">
-                    <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
-                    </svg>
-                    <span className="text-white text-xs font-medium">{album.favoriteCount}</span>
-                  </div>
-                </div>
-              )}
-
-              {/* ホバー時のオーバーレイ */}
-              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-all duration-200" />
-
-              {/* 投稿者情報（常に表示） */}
-              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-3">
-                <p className="text-white text-xs font-medium truncate">{album.uploaderName || album.uploadedBy}</p>
-                {album.caption && <p className="text-white/80 text-xs truncate mt-1">{album.caption}</p>}
-              </div>
-            </div>
+          {filteredAlbums.map((album) => (
+            <AlbumItem key={album.albumId} album={album} onClick={() => handleAlbumClick(album)} isOwner={isOwner} />
           ))}
         </div>
       )}
@@ -853,7 +947,6 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
                 )}
               </div>
             </div>
-
             {/* サムネイル表示（複数枚の場合） */}
             {selectedAlbum.totalPhotos > 1 && (
               <div className="px-4 py-2">
@@ -861,54 +954,13 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
                   <div className="flex justify-center">
                     <div className="flex space-x-2 overflow-x-auto p-2 max-w-full">
                       {selectedAlbum.photos.map((photo, index) => (
-                        <button
+                        <ThumbnailItem
                           key={photo.photoId}
-                          onClick={() => goToPhoto(index)}
-                          className={`relative flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 transition-all ${
-                            currentPhotoIndex === index ? "border-pink-400 scale-110 shadow-lg" : "border-white/30 hover:border-white/60 hover:scale-105"
-                          }`}
-                        >
-                          {photo.mediaType === "video" ? (
-                            <div className="relative w-full h-full">
-                              <video
-                                src={photo.url}
-                                className="w-full h-full object-cover"
-                                muted
-                                playsInline
-                                preload="metadata"
-                                poster={photo.url + "#t=0.1"}
-                                onLoadedMetadata={(e) => {
-                                  const video = e.target as HTMLVideoElement;
-                                  video.currentTime = 0.1;
-                                }}
-                                onError={(e) => {
-                                  const video = e.target as HTMLVideoElement;
-                                  const parent = video.parentElement;
-                                  if (parent) {
-                                    parent.innerHTML = `
-            <div class="w-full h-full bg-gray-200 flex items-center justify-center rounded-lg">
-              <div class="w-4 h-4 bg-black/60 rounded-full flex items-center justify-center">
-                <svg class="w-2 h-2 text-white ml-0.1" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M8 5v14l11-7z"/>
-                </svg>
-              </div>
-            </div>
-          `;
-                                  }
-                                }}
-                              />
-                              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                                <div className="w-4 h-4 bg-black/60 rounded-full flex items-center justify-center">
-                                  <svg className="w-2 h-2 text-white ml-0.1" fill="currentColor" viewBox="0 0 24 24">
-                                    <path d="M8 5v14l11-7z" />
-                                  </svg>
-                                </div>
-                              </div>
-                            </div>
-                          ) : (
-                            <img src={photo.url} alt={`写真 ${index + 1}`} className="w-full h-full object-cover" />
-                          )}
-                        </button>
+                          photo={photo}
+                          index={index}
+                          isSelected={currentPhotoIndex === index}
+                          onClick={() => handleThumbnailClick(index)}
+                        />
                       ))}
                     </div>
                   </div>
