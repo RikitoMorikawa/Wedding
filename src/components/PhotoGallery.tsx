@@ -469,7 +469,7 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
   // ソート済みアルバム（メモ化）
   const sortedFilteredAlbums = useMemo(() => {
     return sortAlbums(filteredAlbums, sortType);
-  }, [filteredAlbums, sortType, sortAlbums]);  
+  }, [filteredAlbums, sortType, sortAlbums]);
 
   // プリロード用の画像URL（メモ化）
   const imageUrls = useMemo(() => {
@@ -520,16 +520,15 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
       );
 
       const validAlbums = albumsWithUrls.filter((album) => album !== null);
-      const sortedAlbums = sortAlbums(validAlbums, "date"); // ← ここを常に初期ソートで固定
+      const sortedAlbums = sortAlbums(validAlbums, sortType);
 
-      // 即座に画面更新（ローディング終了）
       setAlbums(sortedAlbums);
       setLoading(false);
 
-      console.log(`✅ ${sortedAlbums.length}個のアルバムを表示しました`);
+      console.log(`✅ ${sortedAlbums.length}個のアルバムを表示`);
 
-      // Step 2: バッチAPIでお気に入り情報を一括取得
-      if (sortedAlbums.length > 0) {
+      // Step 2: バッチAPIでお気に入り情報を取得
+      if (sortedAlbums.length > 0 && userInfo?.passcode) {
         console.log("⏳ お気に入り情報をバッチ取得中...");
 
         try {
@@ -539,7 +538,7 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              userId: userInfo?.passcode,
+              userId: userInfo.passcode,
               albumIds: albumIds,
             }),
           });
@@ -548,6 +547,17 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
             const batchResult = await batchResponse.json();
 
             if (batchResult.success) {
+              // 📊 取得した情報をログ出力
+              console.log(`📊 バッチ結果:`, batchResult.results);
+
+              let favoriteCount = 0;
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              Object.values(batchResult.results).forEach((result: any) => {
+                if (result.isFavorite) favoriteCount++;
+              });
+
+              console.log(`⭐ ${favoriteCount}個のお気に入りを検出`);
+
               // 一括でお気に入り情報を更新
               setAlbums((prevAlbums) =>
                 prevAlbums.map((album) => ({
@@ -557,23 +567,22 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
                 }))
               );
 
-              console.log(`✅ ${albumIds.length}個のアルバムのお気に入り情報を一括取得完了！`);
+              console.log(`✅ ${albumIds.length}個のアルバムのお気に入り情報を更新完了`);
             } else {
-              console.warn("バッチお気に入り取得でエラー:", batchResult.message);
+              console.warn("⚠️ バッチお気に入り取得でエラー:", batchResult.message);
             }
           } else {
-            console.warn("バッチお気に入りAPI呼び出しでエラー:", batchResponse.status);
+            console.warn("⚠️ バッチお気に入りAPI呼び出しでエラー:", batchResponse.status);
           }
         } catch (error) {
-          console.error("バッチお気に入り取得でエラー:", error);
-          // エラーでもアプリは継続動作
+          console.error("❌ バッチお気に入り取得でエラー:", error);
         }
       }
     } catch (error) {
       console.error("❌ アルバム読み込みエラー:", error);
       setLoading(false);
     }
-  }, [API_BASE, sortAlbums, userInfo?.passcode]);
+  }, [API_BASE, sortType, sortAlbums, userInfo?.passcode]);
 
   // アルバム写真を読み込み（メモ化）
   // ===============================================
@@ -684,13 +693,77 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
     [userInfo?.passcode, API_BASE, setSelectedAlbum, setCurrentPhotoIndex, setAlbums]
   );
 
-  // お気に入り切り替え（メモ化）
   // ===============================================
-  // 🔄 修正版：toggleFavorite関数（2回のAPI呼び出し）
+  // 🆕 お気に入り状態の再同期関数
   // ===============================================
 
+  const refreshFavoriteStatus = useCallback(
+    async (targetId: string) => {
+      if (!userInfo?.passcode) return;
+
+      console.log(`🔄 お気に入り状態を再同期: ${targetId.substring(0, 8)}...`);
+
+      try {
+        const batchResponse = await fetch(`${API_BASE}/favorites/batch`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: userInfo.passcode,
+            albumIds: [targetId],
+          }),
+        });
+
+        if (batchResponse.ok) {
+          const batchResult = await batchResponse.json();
+
+          if (batchResult.success && batchResult.results[targetId]) {
+            const latestData = batchResult.results[targetId];
+
+            console.log(`📊 最新データ: count=${latestData.favoriteCount}, isFavorite=${latestData.isFavorite}`);
+
+            // アルバム一覧を更新
+            setAlbums((prevAlbums) =>
+              prevAlbums.map((album) =>
+                album.albumId === targetId
+                  ? {
+                      ...album,
+                      isFavorite: latestData.isFavorite,
+                      favoriteCount: latestData.favoriteCount,
+                    }
+                  : album
+              )
+            );
+
+            // 詳細画面も更新
+            if (selectedAlbum && selectedAlbum.albumId === targetId) {
+              setSelectedAlbum((prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      isFavorite: latestData.isFavorite,
+                      favoriteCount: latestData.favoriteCount,
+                    }
+                  : null
+              );
+            }
+
+            console.log(`✅ 状態同期完了`);
+          } else {
+            console.warn("⚠️ バッチAPI結果が空");
+          }
+        } else {
+          console.warn(`⚠️ バッチAPI呼び出し失敗: ${batchResponse.status}`);
+        }
+      } catch (error) {
+        console.error("❌ 状態同期エラー:", error);
+      }
+    },
+    [API_BASE, userInfo?.passcode, selectedAlbum]
+  );
+
+  // お気に入り切り替え（メモ化）
   // ===============================================
-  // 🔧 修正版：toggleFavorite関数（スコープエラー解決）
+  // 🔧 改善版：toggleFavorite関数（エラーハンドリング強化）
   // ===============================================
 
   const toggleFavorite = useCallback(
@@ -699,15 +772,15 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
 
       setFavoriteLoading(true);
 
-      // 🔧 変数をtryブロック外で定義（スコープエラー解決）
+      // 現在の状態を確認
       const currentAlbum = albums.find((album) => album.albumId === targetId);
-      const predictedStatus = currentAlbum?.isFavorite || false;
-      const action = predictedStatus ? "remove" : "add";
+      const currentStatus = currentAlbum?.isFavorite || false;
+      const action = currentStatus ? "remove" : "add";
+
+      console.log(`🎯 お気に入り${action}: ${targetId.substring(0, 8)}... (現在の状態: ${currentStatus})`);
 
       try {
         // ✅ Step 1: お気に入り追加/削除API呼び出し
-        console.log(`🔄 ${action === "add" ? "追加" : "削除"}中...`);
-
         const response = await fetch(`${API_BASE}/favorites`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -719,91 +792,46 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
           }),
         });
 
-        if (!response.ok) {
-          console.warn(`Toggle favorite API returned ${response.status}`);
-          return predictedStatus; // 失敗時は元の状態を返す
-        }
-
         const result = await response.json();
 
-        if (!result.success) {
-          console.warn("お気に入り操作が失敗しました:", result.message);
-          return predictedStatus;
-        }
+        // 🔧 重複エラーの適切な処理
+        if (!response.ok || !result.success) {
+          if (response.status === 409 || result.message?.includes("すでにお気に入り")) {
+            console.log(`⚠️ 重複検出: ${targetId.substring(0, 8)}... は既にお気に入り済み`);
 
-        // ✅ Step 2: バッチAPIで最新のお気に入り情報を取得
-        console.log("🔄 最新のお気に入り情報を取得中...");
+            // 重複の場合は、現在の状態を「お気に入り済み」に強制的に更新
+            const correctedStatus = true;
 
-        try {
-          const batchResponse = await fetch(`${API_BASE}/favorites/batch`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              userId: userInfo.passcode,
-              albumIds: [targetId], // 1件だけのバッチ取得
-            }),
-          });
+            setAlbums((prevAlbums) => prevAlbums.map((album) => (album.albumId === targetId ? { ...album, isFavorite: correctedStatus } : album)));
 
-          if (batchResponse.ok) {
-            const batchResult = await batchResponse.json();
-
-            if (batchResult.success && batchResult.results[targetId]) {
-              const newData = batchResult.results[targetId];
-              const newIsFavorite = newData.isFavorite;
-              const newFavoriteCount = newData.favoriteCount;
-
-              // 🔄 アルバム一覧の状態を更新
-              setAlbums((prevAlbums) =>
-                prevAlbums.map((album) => (album.albumId === targetId ? { ...album, isFavorite: newIsFavorite, favoriteCount: newFavoriteCount } : album))
-              );
-
-              // 🔄 選択中アルバムの状態も更新（詳細画面表示中の場合）
-              if (selectedAlbum && selectedAlbum.albumId === targetId) {
-                setSelectedAlbum((prev) =>
-                  prev
-                    ? {
-                        ...prev,
-                        isFavorite: newIsFavorite,
-                        favoriteCount: newFavoriteCount,
-                      }
-                    : null
-                );
-              }
-
-              console.log(`✅ お気に入り${action === "add" ? "追加" : "削除"}完了！`);
-              return newIsFavorite;
+            if (selectedAlbum && selectedAlbum.albumId === targetId) {
+              setSelectedAlbum((prev) => (prev ? { ...prev, isFavorite: correctedStatus } : null));
             }
+
+            // ✅ 最新情報を再取得して同期
+            await refreshFavoriteStatus(targetId);
+            return correctedStatus;
           }
 
-          // バッチAPI失敗時は予測値を使用
-          console.warn("バッチAPI取得に失敗、予測値を使用");
-          const newIsFavorite = !predictedStatus;
-
-          // UI更新（予測値）
-          setAlbums((prevAlbums) => prevAlbums.map((album) => (album.albumId === targetId ? { ...album, isFavorite: newIsFavorite } : album)));
-
-          if (selectedAlbum && selectedAlbum.albumId === targetId) {
-            setSelectedAlbum((prev) => (prev ? { ...prev, isFavorite: newIsFavorite } : null));
-          }
-
-          return newIsFavorite;
-        } catch (batchError) {
-          console.error("バッチAPI取得エラー:", batchError);
-          // 予測値で更新
-          const newIsFavorite = !predictedStatus;
-
-          setAlbums((prevAlbums) => prevAlbums.map((album) => (album.albumId === targetId ? { ...album, isFavorite: newIsFavorite } : album)));
-
-          return newIsFavorite;
+          // その他のエラー
+          console.warn(`❌ お気に入り操作エラー:`, result.message || `HTTP ${response.status}`);
+          return currentStatus; // 元の状態を維持
         }
+
+        console.log(`✅ お気に入り${action}API成功`);
+
+        // ✅ Step 2: 最新状態をバッチAPIで確認
+        await refreshFavoriteStatus(targetId);
+
+        return !currentStatus; // 成功時は状態を反転
       } catch (error) {
-        console.error("お気に入り切り替えエラー:", error);
-        return predictedStatus; // ✅ エラー時は元の状態を返す（スコープ内でアクセス可能）
+        console.error("❌ お気に入り切り替えエラー:", error);
+        return currentStatus; // エラー時は元の状態を維持
       } finally {
         setFavoriteLoading(false);
       }
     },
-    [API_BASE, userInfo?.passcode, albums, selectedAlbum, setAlbums, setSelectedAlbum]
+    [API_BASE, userInfo?.passcode, albums, selectedAlbum]
   );
 
   // 表示切り替え（メモ化）
@@ -1113,12 +1141,7 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
             <div className="relative px-4 py-2 flex items-center justify-center">
               <div className="relative max-w-full">
                 {selectedAlbum.photos[currentPhotoIndex]?.mediaType === "video" ? (
-                  <video
-                    src={selectedAlbum.photos[currentPhotoIndex]?.url}
-                    className="max-w-full max-h-[80vh] object-contain mx-auto"
-                    controls
-                    muted
-                  />
+                  <video src={selectedAlbum.photos[currentPhotoIndex]?.url} className="max-w-full max-h-[80vh] object-contain mx-auto" controls muted />
                 ) : (
                   <img
                     src={selectedAlbum.photos[currentPhotoIndex]?.url}
