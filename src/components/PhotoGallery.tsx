@@ -469,7 +469,7 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
   // ソート済みアルバム（メモ化）
   const sortedFilteredAlbums = useMemo(() => {
     return sortAlbums(filteredAlbums, sortType);
-  }, [filteredAlbums, sortType, sortAlbums]);
+  }, [filteredAlbums, sortType, sortAlbums]);  
 
   // プリロード用の画像URL（メモ化）
   const imageUrls = useMemo(() => {
@@ -508,8 +508,8 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
             return {
               ...album,
               mainPhotoUrl: urlResult.url.toString(),
-              favoriteCount: 0, // 初期値
-              isFavorite: false, // 初期値
+              favoriteCount: album.favoriteCount, // ← default 値つけない
+              isFavorite: album.isFavorite, // ← default 値つけない
               isPublic: album.isPublic !== false,
             };
           } catch (error) {
@@ -520,7 +520,7 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
       );
 
       const validAlbums = albumsWithUrls.filter((album) => album !== null);
-      const sortedAlbums = sortAlbums(validAlbums, sortType);
+      const sortedAlbums = sortAlbums(validAlbums, "date"); // ← ここを常に初期ソートで固定
 
       // 即座に画面更新（ローディング終了）
       setAlbums(sortedAlbums);
@@ -548,16 +548,17 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
             const batchResult = await batchResponse.json();
 
             if (batchResult.success) {
-              // 一括でお気に入り情報を更新
+              console.log("📦 バッチお気に入り情報:", batchResult.results);
               setAlbums((prevAlbums) =>
-                prevAlbums.map((album) => ({
-                  ...album,
-                  favoriteCount: batchResult.results[album.albumId]?.favoriteCount || 0,
-                  isFavorite: batchResult.results[album.albumId]?.isFavorite || false,
-                }))
+                prevAlbums.map((album) => {
+                  const updated = batchResult.results[album.albumId];
+                  return {
+                    ...album,
+                    isFavorite: updated?.isFavorite ?? false,
+                    favoriteCount: updated?.favoriteCount ?? 0,
+                  };
+                })
               );
-
-              console.log(`✅ ${albumIds.length}個のアルバムのお気に入り情報を一括取得完了！`);
             } else {
               console.warn("バッチお気に入り取得でエラー:", batchResult.message);
             }
@@ -573,7 +574,7 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
       console.error("❌ アルバム読み込みエラー:", error);
       setLoading(false);
     }
-  }, [API_BASE, sortType, sortAlbums, userInfo?.passcode]);
+  }, [API_BASE, sortAlbums, userInfo?.passcode]);
 
   // アルバム写真を読み込み（メモ化）
   // ===============================================
@@ -599,6 +600,8 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
         );
 
         const validPhotos = photosWithUrls.filter((photo) => photo.url);
+
+        console.log("🔍 詳細画面に渡す album.isFavorite:", album.isFavorite);
 
         // 🔥 まず基本情報で即座に表示（既存のお気に入り情報を使用）
         setSelectedAlbum({
@@ -701,8 +704,10 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
 
       // 🔧 変数をtryブロック外で定義（スコープエラー解決）
       const currentAlbum = albums.find((album) => album.albumId === targetId);
+      console.log("🧠 現在の isFavorite 状態:", currentAlbum?.isFavorite);
       const predictedStatus = currentAlbum?.isFavorite || false;
       const action = predictedStatus ? "remove" : "add";
+      console.log("📤 実行アクション:", action);
 
       try {
         // ✅ Step 1: お気に入り追加/削除API呼び出し
@@ -862,9 +867,10 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
   // イベントハンドラー（メモ化）
   const handleAlbumClick = useCallback(
     (album: Album) => {
-      loadAlbumPhotos(album);
+      const latestAlbum = albums.find((a) => a.albumId === album.albumId) ?? album;
+      loadAlbumPhotos(latestAlbum);
     },
-    [loadAlbumPhotos]
+    [albums, loadAlbumPhotos]
   );
 
   const handleThumbnailClick = useCallback((index: number) => {
