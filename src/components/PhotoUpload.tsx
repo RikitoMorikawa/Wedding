@@ -338,7 +338,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
                   : `${selectedMediaType === "photo" ? "写真" : "動画"}を追加`}
               </p>
               <p className="text-xs text-gray-500 mt-1">
-                {selectedMediaType === "photo" ? "JPG, PNG, GIF, WebP（最大50MB・プロ撮影対応）" : "MP4, MOV, AVI, WebM（最大200MB・約1-2分対応）"}
+                {selectedMediaType === "photo" ? "JPG, PNG, GIF, WebP（最大50MB/枚）" : "MP4, MOV, AVI, WebM（最大200MB/枚）"}
               </p>
               <p className="text-xs text-gray-400 mt-1">
                 最大{maxFiles}個 | 合計{maxTotalSizeMB}MB
