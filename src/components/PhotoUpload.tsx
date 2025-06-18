@@ -368,19 +368,17 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
         {/* 選択されたファイルの情報 */}
         {selectedFiles.length > 0 && (
           <div className="bg-pink-50/50 rounded-2xl p-3">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-semibold text-gray-700">
+            <div className="mb-2">
+              <h3 className="text-sm font-semibold text-gray-700 mb-1">
                 {t("selected_files")}
                 {selectedMediaType === "photo" ? t("photo") : t("video")} ({selectedFiles.length}/{maxFiles}
-                {t("files_count")})
-                {((selectedMediaType === "video" && selectedFiles.length === maxFiles) ||
-                  (selectedMediaType === "photo" && selectedFiles.length === maxFiles)) && (
-                  <span className="ml-2 text-xs text-orange-600">{t("limit_reached")}</span>
-                )}
+                {t("files_count")}){selectedFiles.length === maxFiles && <span className="ml-2 text-xs text-orange-600">{t("limit_reached")}</span>}
               </h3>
-              <button onClick={removeAllFiles} className="text-xs text-red-500 hover:text-red-700 font-medium" disabled={uploading}>
-                {t("remove_all")}
-              </button>
+              <div className="text-right">
+                <button onClick={removeAllFiles} className="text-xs text-red-500 hover:text-red-700 font-medium" disabled={uploading}>
+                  {t("remove_all")}
+                </button>
+              </div>
             </div>
             <div className="space-y-2 max-h-40 overflow-y-auto">
               {selectedFiles.map((selectedFile, index) => (
@@ -430,11 +428,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
             onChange={(e) => setCaption(e.target.value)}
             rows={3}
             className="w-full px-4 py-3 border-2 border-gray-200 rounded-2xl focus:outline-none focus:border-pink-400 focus:ring-4 focus:ring-pink-100 transition-all duration-200 bg-gray-50/50 resize-none"
-            placeholder={
-              selectedFiles.length > 1
-                ? t("album_comment_placeholder")
-                : t("single_comment_placeholder")
-            }
+            placeholder={selectedFiles.length > 1 ? t("album_comment_placeholder") : t("single_comment_placeholder")}
             disabled={uploading}
           />
         </div>
