@@ -354,10 +354,6 @@ const translations: Translations = {
     ja: "予期しないエラーが発生しました",
     en: "An unexpected error occurred",
   },
-  time_estimate_1_2min: {
-    ja: "（約1-2分対応）",
-    en: "(1-2 min support)",
-  },
   file_formats_photo: {
     ja: "JPG, PNG, GIF, WebP（最大50MB/枚）",
     en: "JPG, PNG, GIF, WebP (Max 50MB each)",
@@ -393,6 +389,28 @@ const translations: Translations = {
   please_select: {
     ja: "を選択してください",
     en: "Please select",
+  },
+
+  // エラーメッセージ関連
+  file_count_limit_simple: {
+    ja: "まで",
+    en: "max",
+  },
+  file_size_limit_simple: {
+    ja: "まで",
+    en: "max",
+  },
+  total_size_limit_simple: {
+    ja: "合計",
+    en: "Total",
+  },
+  count_over: {
+    ja: "枚数オーバー",
+    en: "Too many files",
+  },
+  size_over: {
+    ja: "サイズオーバー",
+    en: "Size exceeded",
   },
 };
 

@@ -1,4 +1,4 @@
-// src/components/PhotoUpload.tsx - バランス型設定（進捗表示なし）
+// src/components/PhotoUpload.tsx - エラーメッセージをインライン表示
 "use client";
 
 import { useState, useRef } from "react";
@@ -25,6 +25,9 @@ interface SelectedFile {
   mediaType: "photo" | "video";
 }
 
+// エラータイプの定義
+type ErrorType = "file_count" | "file_size" | "total_size" | "file_type" | null;
+
 // ✅ バランス型設定
 const MAX_PHOTO_FILES = 20; // 写真: 20ファイル
 const MAX_VIDEO_FILES = 3; // 動画: 3ファイル
@@ -37,6 +40,9 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
   const [selectedFiles, setSelectedFiles] = useState<SelectedFile[]>([]);
   const [caption, setCaption] = useState("");
   const [showWeddingConfirm, setShowWeddingConfirm] = useState(false);
+  // 🆕 エラー管理用の状態
+  const [errorType, setErrorType] = useState<ErrorType>(null);
+  const [errorDetails, setErrorDetails] = useState<string>("");
 
   // 🆕 多言語対応
   const { t } = useLanguage();
@@ -49,8 +55,16 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
   const getMaxSize = () => (selectedMediaType === "photo" ? MAX_PHOTO_SIZE : MAX_VIDEO_SIZE);
   const getMaxSizeText = () => (selectedMediaType === "photo" ? "50MB" : "200MB");
 
+  // 🆕 エラーをクリアする関数
+  const clearError = () => {
+    setErrorType(null);
+    setErrorDetails("");
+  };
+
   // ファイル選択処理
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    clearError(); // エラーをクリア
+
     const files = Array.from(event.target.files || []);
     const maxFiles = getMaxFiles();
 
@@ -60,30 +74,29 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
     if (selectedMediaType === "photo") {
       validFiles = files.filter((file) => file.type.startsWith("image/"));
       if (validFiles.length !== files.length) {
-        alert(t("photo_files_only"));
+        setErrorType("file_type");
+        setErrorDetails(t("photo_files_only"));
+        return;
       }
     } else if (selectedMediaType === "video") {
       validFiles = files.filter((file) => file.type.startsWith("video/"));
       if (validFiles.length !== files.length) {
-        alert(t("video_files_only"));
+        setErrorType("file_type");
+        setErrorDetails(t("video_files_only"));
+        return;
       }
     }
 
     if (validFiles.length === 0) {
-      alert(t("select_file_type").replace("ファイル", selectedMediaType === "photo" ? t("image") : t("video")));
+      setErrorType("file_type");
+      setErrorDetails(t("select_file_type").replace("ファイル", selectedMediaType === "photo" ? t("image") : t("video")));
       return;
     }
 
     // メディアタイプ別枚数制限チェック
     if (selectedFiles.length + validFiles.length > maxFiles) {
-      const mediaTypeText = selectedMediaType === "photo" ? t("photo") : t("video");
-      const timeEstimate = selectedMediaType === "photo" ? "" : t("time_estimate_1_2min");
-      alert(
-        `${mediaTypeText}${t("file_count_limit").replace("{max}", maxFiles.toString())}${timeEstimate}\n\n${t("current_count").replace(
-          "{current}",
-          selectedFiles.length.toString()
-        )}\n${t("adding_count").replace("{adding}", validFiles.length.toString())}\n${t("limit_count").replace("{limit}", maxFiles.toString())}`
-      );
+      setErrorType("file_count");
+      setErrorDetails(`${maxFiles}${t("files_count")}まで`);
       return;
     }
 
@@ -93,13 +106,8 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
 
     if (oversizedFiles.length > 0) {
       const maxSizeText = getMaxSizeText();
-      const mediaTypeText = selectedMediaType === "photo" ? t("image") : t("video");
-      const description = selectedMediaType === "photo" ? t("pro_photo_support") : t("video_duration_support");
-      alert(
-        `${mediaTypeText}${t("file_size_limit").replace("{size}", maxSizeText)}${description}\n\n${t("files_too_large")}\n${oversizedFiles
-          .map((f) => `${f.name} (${(f.size / (1024 * 1024)).toFixed(1)}MB)`)
-          .join("\n")}`
-      );
+      setErrorType("file_size");
+      setErrorDetails(`${maxSizeText}まで`);
       return;
     }
 
@@ -109,13 +117,9 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
     const totalSize = currentTotalSize + newFilesTotalSize;
 
     if (totalSize > MAX_TOTAL_SIZE) {
-      const totalSizeMB = (totalSize / (1024 * 1024)).toFixed(1);
       const maxTotalSizeMB = (MAX_TOTAL_SIZE / (1024 * 1024)).toFixed(0);
-      alert(
-        `${t("total_size_exceeded")}\n\n${t("current_total").replace("{size}", totalSizeMB)}\n${t("size_limit").replace("{limit}", maxTotalSizeMB)}\n\n${t(
-          "reduce_files_message"
-        )}`
-      );
+      setErrorType("total_size");
+      setErrorDetails(`合計${maxTotalSizeMB}MBまで`);
       return;
     }
 
@@ -130,6 +134,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
   };
 
   const removeAllFiles = () => {
+    clearError();
     selectedFiles.forEach((file) => URL.revokeObjectURL(file.preview));
     setSelectedFiles([]);
     const fileInput = document.getElementById("file-input") as HTMLInputElement;
@@ -137,6 +142,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
   };
 
   const removeFile = (fileId: string) => {
+    clearError();
     const fileToRemove = selectedFiles.find((f) => f.id === fileId);
     if (fileToRemove) {
       URL.revokeObjectURL(fileToRemove.preview);
@@ -180,6 +186,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
 
     animateButton();
     setUploading(true);
+    clearError();
 
     try {
       const user = await getCurrentUser();
@@ -299,14 +306,14 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
         if (error.message.includes("exceeds") && error.message.includes("limit")) {
           alert(`❌ ファイルサイズエラー\n${error.message}`);
         } else if (error.message.includes("already exist")) {
-          alert("❌ 重複エラー\n同じファイルが既に存在します。しばらく待ってから再試行してください。");
+          alert(t("duplicate_error"));
         } else if (error.message.includes("overloaded")) {
-          alert("❌ サーバー負荷エラー\nサーバーが一時的に混雑しています。少し待ってから再試行してください。");
+          alert(t("server_overload_error"));
         } else {
-          alert(`❌ アップロードエラー\n${error.message}`);
+          alert(`❌ ${t("upload_error")}\n${error.message}`);
         }
       } else {
-        alert("❌ 予期しないエラーが発生しました");
+        alert(`❌ ${t("unexpected_error")}`);
       }
 
       setTimeout(() => {
@@ -320,6 +327,24 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
   const totalFileSize = selectedFiles.reduce((sum, file) => sum + file.file.size, 0) / (1024 * 1024);
   const maxTotalSizeMB = MAX_TOTAL_SIZE / (1024 * 1024);
   const maxFiles = getMaxFiles();
+
+  // 🆕 エラーメッセージを取得する関数
+  const getErrorMessage = () => {
+    if (!errorType) return null;
+
+    switch (errorType) {
+      case "file_count":
+        return `枚数オーバー（${errorDetails}）`;
+      case "file_size":
+        return `サイズオーバー（${errorDetails}）`;
+      case "total_size":
+        return `サイズオーバー（${errorDetails}）`;
+      case "file_type":
+        return errorDetails;
+      default:
+        return null;
+    }
+  };
 
   return (
     <>
@@ -339,19 +364,18 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
 
           <label
             htmlFor="file-input"
-            className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-pink-300 rounded-2xl cursor-pointer bg-pink-50/50 hover:bg-pink-50 transition-colors"
+            className={`flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-2xl cursor-pointer transition-colors ${
+              errorType ? "border-red-400 bg-red-50/50 hover:bg-red-50" : "border-pink-300 bg-pink-50/50 hover:bg-pink-50"
+            }`}
           >
             <div className="flex flex-col items-center justify-center py-3">
               <div className="text-3xl mb-2">{selectedMediaType === "photo" ? "📷" : "🎥"}</div>
-              <p className="text-sm text-pink-600 font-medium">
+              <p className={`text-sm font-medium ${errorType ? "text-red-600" : "text-pink-600"}`}>
                 {selectedFiles.length === 0
                   ? `${selectedMediaType === "photo" ? t("photo") : t("video")}${t("tap_to_select")}`
                   : `${selectedMediaType === "photo" ? t("photo") : t("video")}${t("add_files")}`}
               </p>
               <p className="text-xs text-gray-500 mt-1">{selectedMediaType === "photo" ? t("file_formats_photo") : t("file_formats_video")}</p>
-              <p className="text-xs text-gray-400 mt-1">
-                {t("max_files_total_size").replace("{maxFiles}", maxFiles.toString()).replace("{totalSize}", maxTotalSizeMB.toString())}
-              </p>
             </div>
             <input
               id="file-input"
@@ -363,6 +387,28 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
               disabled={selectedFiles.length >= maxFiles || uploading}
             />
           </label>
+
+          {/* 🆕 エラーメッセージ表示エリア */}
+          {errorType && (
+            <div className="mt-2 p-3 bg-red-50 border border-red-200 rounded-lg flex items-start">
+              <svg className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                />
+              </svg>
+              <div className="ml-3 flex-1">
+                <p className="text-sm text-red-800 font-medium">{getErrorMessage()}</p>
+              </div>
+              <button onClick={clearError} className="ml-2 text-red-500 hover:text-red-700">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          )}
         </div>
 
         {/* 選択されたファイルの情報 */}
@@ -435,7 +481,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
 
         {/* アップロードボタン */}
         <div className="pt-3">
-          <BubblyButton ref={buttonRef} onClick={handleUploadClick} disabled={selectedFiles.length === 0 || uploading}>
+          <BubblyButton ref={buttonRef} onClick={handleUploadClick} disabled={selectedFiles.length === 0 || uploading || errorType !== null}>
             {uploading ? (
               <div className="flex items-center justify-center space-x-2">
                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
@@ -443,7 +489,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
               </div>
             ) : (
               `${
-                selectedFiles.length === 0
+                selectedFiles.length === 0 || errorType !== null
                   ? `${selectedMediaType === "photo" ? t("photo") : t("video")}${t("please_select")}`
                   : selectedFiles.length === 1
                   ? `${selectedMediaType === "photo" ? t("photo") : t("video")}${t("upload_files")}`
