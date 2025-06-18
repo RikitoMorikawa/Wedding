@@ -168,6 +168,10 @@ const translations: Translations = {
     ja: "他のメディアタイプを確認してみてください",
     en: "Try checking other media types",
   },
+  all: {
+    ja: "すべて",
+    en: "All",
+  },
 
   // PhotoUploadModal関連
   post_order: {
@@ -179,7 +183,7 @@ const translations: Translations = {
     en: "Popular",
   },
 
-  // LanguageContext.tsx の translations に追加
+  // cpnfirmation関連
   deleted_photo_confirmation: {
     ja: "削除済み写真の確認",
     en: "Deleted Photo Confirmation",
