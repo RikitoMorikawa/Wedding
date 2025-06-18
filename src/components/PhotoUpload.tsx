@@ -1,4 +1,4 @@
-// src/components/PhotoUpload.tsx - バランス型設定（進捗表示なし）
+// src/components/PhotoUpload.tsx - 元の実装ベース（最小限修正版）
 "use client";
 
 import { useState, useRef } from "react";
@@ -25,9 +25,9 @@ interface SelectedFile {
   mediaType: "photo" | "video";
 }
 
-// ✅ バランス型設定
-const MAX_PHOTO_FILES = 20; // 写真: 20ファイル
-const MAX_VIDEO_FILES = 3; // 動画: 3ファイル
+// バランス型設定
+const MAX_PHOTO_FILES = 20;
+const MAX_VIDEO_FILES = 3;
 const MAX_PHOTO_SIZE = 50 * 1024 * 1024; // 50MB
 const MAX_VIDEO_SIZE = 200 * 1024 * 1024; // 200MB
 const MAX_TOTAL_SIZE = 500 * 1024 * 1024; // 500MB
@@ -38,32 +38,38 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
   const [caption, setCaption] = useState("");
   const [showWeddingConfirm, setShowWeddingConfirm] = useState(false);
 
-  // 🆕 多言語対応
   const { t } = useLanguage();
-
   const buttonRef = useRef<HTMLButtonElement>(null);
   const API_BASE = awsconfig.aws_cloud_logic_custom[0].endpoint;
 
-  // ✅ メディアタイプ別の制限値を取得
+  // メディアタイプ別の制限値を取得
   const getMaxFiles = () => (selectedMediaType === "photo" ? MAX_PHOTO_FILES : MAX_VIDEO_FILES);
   const getMaxSize = () => (selectedMediaType === "photo" ? MAX_PHOTO_SIZE : MAX_VIDEO_SIZE);
   const getMaxSizeText = () => (selectedMediaType === "photo" ? "50MB" : "200MB");
 
-  // ファイル選択処理
+  // 🔧 修正：ファイル選択処理（ファイル形式チェック改善）
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || []);
     const maxFiles = getMaxFiles();
 
     let validFiles: File[] = [];
 
-    // ファイル形式チェック
+    // 🔧 修正：ファイル形式チェック改善
     if (selectedMediaType === "photo") {
-      validFiles = files.filter((file) => file.type.startsWith("image/"));
+      validFiles = files.filter((file) => {
+        const isImage = file.type.startsWith("image/");
+        const hasValidExt = /\.(jpg|jpeg|png|gif|webp)$/i.test(file.name);
+        return isImage && hasValidExt;
+      });
       if (validFiles.length !== files.length) {
         alert(t("photo_files_only"));
       }
     } else if (selectedMediaType === "video") {
-      validFiles = files.filter((file) => file.type.startsWith("video/"));
+      validFiles = files.filter((file) => {
+        const isVideo = file.type.startsWith("video/");
+        const hasValidExt = /\.(mp4|mov|avi|quicktime)$/i.test(file.name);
+        return isVideo || hasValidExt; // 動画はファイル拡張子も考慮
+      });
       if (validFiles.length !== files.length) {
         alert(t("video_files_only"));
       }
@@ -119,6 +125,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
       return;
     }
 
+    // 🔧 修正：プレビュー生成を即座に行う（元の実装と同じ）
     const newFiles: SelectedFile[] = validFiles.map((file) => ({
       file,
       id: uuidv4(),
@@ -174,7 +181,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
     setShowWeddingConfirm(false);
   };
 
-  // ✅ シンプルなバッチアップロード処理
+  // ✅ 元の実装のバッチアップロード処理（そのまま）
   const performBatchUpload = async () => {
     if (selectedFiles.length === 0 || !userInfo) return;
 
