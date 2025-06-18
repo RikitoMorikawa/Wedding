@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 interface WeddingConfirmDialogProps {
   isOpen: boolean;
@@ -10,6 +11,8 @@ interface WeddingConfirmDialogProps {
 }
 
 export default function WeddingConfirmDialog({ isOpen, onConfirm, onCancel }: WeddingConfirmDialogProps) {
+  const { t, language } = useLanguage();
+
   // Escキーでダイアログを閉じる
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
@@ -51,16 +54,25 @@ export default function WeddingConfirmDialog({ isOpen, onConfirm, onCancel }: We
                 />
               </svg>
             </div>
-            <h3 className="text-lg font-bold text-gray-900">写真の確認</h3>
+            <h3 className="text-lg font-bold text-gray-900">{t("photo_confirmation")}</h3>
           </div>
         </div>
 
         {/* メッセージ */}
         <div className="px-6 py-4">
           <p className="text-gray-700 leading-relaxed mb-3">
-            この写真は<span className="font-bold text-pink-600">本日の結婚式</span>で撮影したものですか？
+            {language === "ja" ? (
+              <>
+                この写真は<span className="font-bold text-pink-600">本日の結婚式</span>で撮影したものですか？
+              </>
+            ) : (
+              <>
+                Was this photo taken at <br></br>
+                <span className="font-bold text-pink-600">today&apos;s wedding?</span>
+              </>
+            )}
           </p>
-          <p className="text-sm text-gray-600">結婚式に関係のない写真の投稿はご遠慮ください。</p>
+          <p className="text-sm text-gray-600">{t("wedding_only_notice")}</p>
         </div>
 
         {/* ボタン */}
@@ -69,13 +81,13 @@ export default function WeddingConfirmDialog({ isOpen, onConfirm, onCancel }: We
             onClick={onCancel}
             className="flex-1 px-4 py-3 text-gray-700 bg-white border border-gray-300 rounded-xl hover:bg-gray-50 hover:border-gray-400 transition-all duration-200 font-medium"
           >
-            いいえ
+            {t("no")}
           </button>
           <button
             onClick={onConfirm}
             className="flex-1 px-4 py-3 text-white bg-pink-500 hover:bg-pink-600 rounded-xl transition-all duration-200 font-medium shadow-lg hover:shadow-xl transform hover:scale-105"
           >
-            はい
+            {t("yes")}
           </button>
         </div>
       </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 interface ConfirmDialogProps {
   isOpen: boolean;
@@ -8,11 +9,9 @@ interface ConfirmDialogProps {
   onCancel: () => void;
 }
 
-export default function ConfirmDialog({
-  isOpen,
-  onConfirm,
-  onCancel
-}: ConfirmDialogProps) {
+export default function ConfirmDialog({ isOpen, onConfirm, onCancel }: ConfirmDialogProps) {
+  const { t } = useLanguage();
+
   // Escキーでダイアログを閉じる
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
@@ -52,23 +51,15 @@ export default function ConfirmDialog({
                 />
               </svg>
             </div>
-            <h3 className="text-lg font-bold text-gray-900">削除済み写真の確認</h3>
+            <h3 className="text-lg font-bold text-gray-900">{t("deleted_photo_confirmation")}</h3>
           </div>
         </div>
 
         {/* メッセージ */}
         <div className="px-6 py-4">
-          <p className="text-gray-700 leading-relaxed">
-            この写真は削除済みです。
-            <br />
-          </p>
-          <p className="text-gray-700 leading-relaxed mt-3">
-            {" "}
-            画面を閉じると、
-            <br />
-            この投稿は復元できません。
-          </p>
-          <p className="text-gray-800 font-medium mt-4">本当にモーダルを閉じますか？</p>
+          <p className="text-gray-700 leading-relaxed">{t("photo_is_deleted")}</p>
+          <p className="text-gray-700 leading-relaxed mt-3 whitespace-pre-line">{t("cannot_restore_after_close")}</p>
+          <p className="text-gray-800 font-medium mt-4">{t("really_close_modal")}</p>
         </div>
 
         {/* ボタン */}
@@ -77,13 +68,13 @@ export default function ConfirmDialog({
             onClick={onCancel}
             className="flex-1 px-4 py-3 text-gray-700 bg-white border border-gray-300 rounded-xl hover:bg-gray-50 hover:border-gray-400 transition-all duration-200 font-medium"
           >
-            キャンセル
+            {t("cancel")}
           </button>
           <button
             onClick={onConfirm}
             className="flex-1 px-4 py-3 text-white bg-orange-500 hover:bg-orange-600 rounded-xl transition-all duration-200 font-medium"
           >
-            閉じる
+            {t("close")}
           </button>
         </div>
       </div>

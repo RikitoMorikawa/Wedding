@@ -169,6 +169,7 @@ const translations: Translations = {
     en: "Try checking other media types",
   },
 
+  // PhotoUploadModal関連
   post_order: {
     ja: "投稿順",
     en: "Date",
@@ -176,6 +177,52 @@ const translations: Translations = {
   popularity_order: {
     ja: "人気順",
     en: "Popular",
+  },
+
+  // LanguageContext.tsx の translations に追加
+  deleted_photo_confirmation: {
+    ja: "削除済み写真の確認",
+    en: "Deleted Photo Confirmation",
+  },
+  photo_is_deleted: {
+    ja: "この写真は削除済みです。",
+    en: "This photo has been deleted.",
+  },
+  cannot_restore_after_close: {
+    ja: "画面を閉じると、\nこの投稿は復元できません。",
+    en: "Once you close this screen,\nthis post cannot be restored.",
+  },
+  really_close_modal: {
+    ja: "本当にモーダルを閉じますか？",
+    en: "Are you sure you want to close this modal?",
+  },
+  cancel: {
+    ja: "キャンセル",
+    en: "Cancel",
+  },
+  close: {
+    ja: "閉じる",
+    en: "Close",
+  },
+  photo_confirmation: {
+    ja: "写真の確認",
+    en: "Photo Confirmation",
+  },
+  wedding_photo_question: {
+    ja: "この写真は本日の結婚式で撮影したものですか？",
+    en: "Was this photo taken at today's wedding?",
+  },
+  wedding_only_notice: {
+    ja: "結婚式に関係のない写真の投稿はご遠慮ください。",
+    en: "Please refrain from posting photos unrelated to the wedding.",
+  },
+  no: {
+    ja: "いいえ",
+    en: "No",
+  },
+  yes: {
+    ja: "はい",
+    en: "Yes",
   },
 };
 
