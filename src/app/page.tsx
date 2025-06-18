@@ -9,6 +9,8 @@ import CustomAuth from "@/components/CustomAuth";
 import PhotoGallery from "@/components/PhotoGallery";
 import PhotoUpload from "@/components/PhotoUpload";
 import UserRegistrationModal from "@/components/UserRegistrationModal";
+import { LanguageProvider, useLanguage } from "@/contexts/LanguageContext";
+import LanguageSwitcher from "@/components/LanguageSwitcher";
 
 // Amplifyの設定を確実に行う
 Amplify.configure(awsconfig);
@@ -27,7 +29,8 @@ interface ApiResponse {
   message?: string;
 }
 
-export default function Home() {
+// メインコンポーネント（言語コンテキスト内）
+function HomeContent() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
   const [loading, setLoading] = useState(true);
@@ -36,8 +39,8 @@ export default function Home() {
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [showMediaSelector, setShowMediaSelector] = useState(false); // メディア選択の表示状態
   const [selectedMediaType, setSelectedMediaType] = useState<MediaType>("photo");
+  const { t, language } = useLanguage();
 
-  // 既存の関数群（checkUser, fetchUserInfo, handleLogout等）は同じなので省略...
   const checkUser = async () => {
     console.log("=== Starting checkUser ===");
     try {
@@ -123,7 +126,7 @@ export default function Home() {
           <div className="inline-block p-4 bg-white rounded-full shadow-lg mb-4">
             <div className="w-12 h-12 bg-gradient-to-br from-pink-400 to-purple-400 rounded-full animate-pulse"></div>
           </div>
-          <div className="text-xl text-gray-700">読み込み中...</div>
+          <div className="text-xl text-gray-700">{t("loading")}</div>
         </div>
       </div>
     );
@@ -140,7 +143,7 @@ export default function Home() {
       <div className="min-h-screen bg-gradient-to-br from-pink-50 via-white to-purple-50 flex items-center justify-center">
         <div className="text-center">
           <div className="w-16 h-16 border-4 border-pink-300 border-t-pink-600 rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-gray-600 font-medium">ユーザー情報を確認中...</p>
+          <p className="text-gray-600 font-medium">{language === "ja" ? "ユーザー情報を確認中..." : "Checking user information..."}</p>
         </div>
       </div>
     );
@@ -173,10 +176,20 @@ export default function Home() {
           <div>
             <h1 className="text-xl font-bold bg-gradient-to-r from-pink-600 to-purple-600 bg-clip-text text-transparent">Wedding Photos</h1>
             <p className="text-sm text-gray-600">
-              こんにちは、<span className="font-medium text-pink-600">{userInfo?.name}</span>さん
+              {language === "ja" ? (
+                <>
+                  こんにちは、<span className="font-medium text-pink-600">{userInfo?.name}</span>さん
+                </>
+              ) : (
+                <>
+                  Hello, <span className="font-medium text-pink-600">{userInfo?.name}</span>
+                </>
+              )}
             </p>
           </div>
           <div className="flex items-center space-x-3">
+            {/* 言語切り替えボタン */}
+            <LanguageSwitcher />
             <button onClick={handleLogout} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
               <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
@@ -218,7 +231,7 @@ export default function Home() {
                   </svg>
                 </div>
                 <div className="text-left">
-                  <div className="font-semibold text-gray-800">📷 写真</div>
+                  <div className="font-semibold text-gray-800">📷 {language === "ja" ? "写真" : "Photo"}</div>
                   <div className="text-xs text-gray-500">JPG, PNG, GIF</div>
                 </div>
               </button>
@@ -234,7 +247,7 @@ export default function Home() {
                   </svg>
                 </div>
                 <div className="text-left">
-                  <div className="font-semibold text-gray-800">🎥 動画</div>
+                  <div className="font-semibold text-gray-800">🎥 {language === "ja" ? "動画" : "Video"}</div>
                   <div className="text-xs text-gray-500">MP4, MOV, AVI</div>
                 </div>
               </button>
@@ -248,7 +261,7 @@ export default function Home() {
           className={`w-14 h-14 bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 text-white rounded-full shadow-lg hover:shadow-xl transition-all duration-200 transform hover:scale-105 ${
             showMediaSelector ? "rotate-45" : ""
           }`}
-          title="投稿する"
+          title={language === "ja" ? "投稿する" : "Upload"}
         >
           <svg className="w-6 h-6 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -266,7 +279,9 @@ export default function Home() {
                 <div className="flex items-center space-x-2">
                   <span className="text-2xl">{selectedMediaType === "photo" ? "📷" : "🎥"}</span>
                   <h2 className="text-xl font-bold bg-gradient-to-r from-pink-600 to-purple-600 bg-clip-text text-transparent">
-                    {selectedMediaType === "photo" ? "写真" : "動画"}をアップロード
+                    {language === "ja"
+                      ? `${selectedMediaType === "photo" ? "写真" : "動画"}をアップロード`
+                      : `Upload ${selectedMediaType === "photo" ? "Photo" : "Video"}`}
                   </h2>
                 </div>
                 <button
@@ -291,5 +306,14 @@ export default function Home() {
         </div>
       )}
     </div>
+  );
+}
+
+// メインエクスポートコンポーネント（LanguageProviderでラップ）
+export default function Home() {
+  return (
+    <LanguageProvider>
+      <HomeContent />
+    </LanguageProvider>
   );
 }

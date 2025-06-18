@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { signIn, SignInOutput } from "aws-amplify/auth";
+import { useLanguage } from "@/contexts/LanguageContext";
+import LanguageSwitcher from "@/components/LanguageSwitcher";
 
 interface CustomAuthProps {
   onAuthSuccess: () => void;
@@ -11,12 +13,13 @@ export default function CustomAuth({ onAuthSuccess }: CustomAuthProps) {
   const [passcode, setPasscode] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
+  const { t } = useLanguage();
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!passcode.trim() || passcode.length < 6) {
-      setError("6文字のパスコードを入力してください");
+      setError(t("enter_6_digit_passcode"));
       return;
     }
 
@@ -39,18 +42,18 @@ export default function CustomAuth({ onAuthSuccess }: CustomAuthProps) {
         onAuthSuccess();
       } else {
         console.log("❌ CustomAuth: Login incomplete:", result.nextStep);
-        setError("ログインが完了しませんでした");
+        setError(t("login_incomplete"));
       }
     } catch (error: unknown) {
       console.error("CustomAuth: Login error:", error);
 
       const err = error as { name?: string };
       if (err.name === "NotAuthorizedException") {
-        setError("パスコードが正しくありません");
+        setError(t("incorrect_passcode"));
       } else if (err.name === "UserNotFoundException") {
-        setError("ユーザーが見つかりません");
+        setError(t("user_not_found"));
       } else {
-        setError("ログインエラーが発生しました");
+        setError(t("login_error"));
       }
     } finally {
       setIsLoading(false);
@@ -58,7 +61,12 @@ export default function CustomAuth({ onAuthSuccess }: CustomAuthProps) {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-rose-50 via-pink-50 to-purple-50 px-4 py-8 flex flex-col justify-center">
+    <div className="min-h-screen bg-gradient-to-br from-rose-50 via-pink-50 to-purple-50 px-4 py-8 flex flex-col justify-center relative">
+      {/* 言語切り替えボタン - 右上 */}
+      <div className="absolute top-4 right-4 z-10">
+        <LanguageSwitcher />
+      </div>
+
       {/* ヘッダー部分 */}
       <div className="text-center mb-4">
         <div className="inline-block p-4 bg-white rounded-full shadow-lg mb-6">
@@ -68,8 +76,10 @@ export default function CustomAuth({ onAuthSuccess }: CustomAuthProps) {
             </svg>
           </div>
         </div>
-        <h1 className="text-3xl font-bold bg-gradient-to-r from-pink-600 via-purple-600 to-pink-600 bg-clip-text text-transparent mb-2">Wedding Memories</h1>
-        <p className="text-gray-600 text-lg">結婚式写真共有</p>
+        <h1 className="text-3xl font-bold bg-gradient-to-r from-pink-600 via-purple-600 to-pink-600 bg-clip-text text-transparent mb-2">
+          {t("wedding_memories")}
+        </h1>
+        <p className="text-gray-600 text-lg">{t("wedding_photo_sharing")}</p>
       </div>
 
       {/* フォーム部分 */}
@@ -78,7 +88,7 @@ export default function CustomAuth({ onAuthSuccess }: CustomAuthProps) {
           <form onSubmit={handleLogin} className="space-y-6">
             <div>
               <label htmlFor="passcode" className="block text-sm font-semibold text-gray-700 mb-3">
-                招待コード
+                {t("invitation_code")}
               </label>
               <div className="relative">
                 <input
@@ -87,7 +97,7 @@ export default function CustomAuth({ onAuthSuccess }: CustomAuthProps) {
                   value={passcode}
                   onChange={(e) => setPasscode(e.target.value)}
                   className="w-full px-4 py-4 text-lg border-2 border-gray-200 rounded-2xl focus:outline-none focus:border-pink-400 focus:ring-4 focus:ring-pink-100 transition-all duration-200 bg-gray-50/50"
-                  placeholder="招待コードを入力"
+                  placeholder={t("enter_invitation_code")}
                   required
                   disabled={isLoading}
                 />
@@ -138,7 +148,7 @@ export default function CustomAuth({ onAuthSuccess }: CustomAuthProps) {
                       d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                     ></path>
                   </svg>
-                  ログイン中...
+                  {t("logging_in")}
                 </div>
               ) : (
                 <div className="flex items-center justify-center gap-2">
@@ -147,10 +157,10 @@ export default function CustomAuth({ onAuthSuccess }: CustomAuthProps) {
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       strokeWidth={2}
-                      d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1"
+                      d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013 3v1"
                     />
                   </svg>
-                  ログイン
+                  {t("login")}
                 </div>
               )}
             </button>
@@ -159,11 +169,7 @@ export default function CustomAuth({ onAuthSuccess }: CustomAuthProps) {
 
         {/* フッター */}
         <div className="text-center mt-8">
-          <p className="text-sm text-gray-500">
-            特別な日の思い出を
-            <br />
-            みんなで共有しましょう 💕
-          </p>
+          <p className="text-sm text-gray-500 whitespace-pre-line">{t("special_day_memory")}</p>
         </div>
       </div>
     </div>

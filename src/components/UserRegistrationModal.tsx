@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Amplify } from "aws-amplify";
 import { post } from "aws-amplify/api";
 import awsconfig from "../aws-exports";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 // Amplifyの設定
 Amplify.configure(awsconfig);
@@ -22,12 +23,13 @@ interface ApiResponse {
 export default function UserRegistrationModal({ passcode, onRegister, onLogout }: UserRegistrationModalProps) {
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
+  const { t, language } = useLanguage();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!name.trim()) {
-      alert("名前を入力してください");
+      alert(t("enter_name"));
       return;
     }
 
@@ -57,7 +59,7 @@ export default function UserRegistrationModal({ passcode, onRegister, onLogout }
       }
     } catch (error) {
       console.error("Error registering user:", error);
-      alert("登録に失敗しました。もう一度お試しください。");
+      alert(t("registration_failed"));
     } finally {
       setLoading(false);
     }
@@ -73,29 +75,37 @@ export default function UserRegistrationModal({ passcode, onRegister, onLogout }
                 <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
               </svg>
             </div>
-            <h2 className="text-2xl font-bold bg-gradient-to-r from-pink-600 to-purple-600 bg-clip-text text-transparent mb-2">ユーザー情報登録</h2>
+            <h2 className="text-2xl font-bold bg-gradient-to-r from-pink-600 to-purple-600 bg-clip-text text-transparent mb-2">{t("user_registration")}</h2>
           </div>
           <div className="text-center bg-pink-50 rounded-xl p-4 border border-pink-100">
             <p className="text-gray-700 text-sm">
-              招待コード「<span className="font-bold text-pink-600">{passcode}</span>」
+              {language === "ja" ? (
+                <>
+                  招待コード「<span className="font-bold text-pink-600">{passcode}</span>」
+                  <br />
+                  {t("logged_in_with_code")}
+                </>
+              ) : (
+                <>
+                  {t("logged_in_with_code")} with code <span className="font-bold text-pink-600">{passcode}</span>
+                </>
+              )}
             </p>
-            <p className="text-gray-700 text-sm">でログインしました</p>
-            <p className="text-gray-600 text-sm mt-2">お名前を登録して</p>
-            <p className="text-gray-600 text-sm mt-2"> 写真共有を始めましょう!</p>
+            <p className="text-gray-600 text-sm mt-2 whitespace-pre-line">{t("register_name_start")}</p>
           </div>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-6">
           <div>
             <label className="block text-sm font-semibold text-gray-700 mb-3">
-              お名前 <span className="text-red-500">*</span>
+              {t("name")} <span className="text-red-500">{t("required")}</span>
             </label>
             <div className="relative">
               <input
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="例：田中太郎"
+                placeholder={t("name_example")}
                 className="w-full px-4 py-4 text-lg border-2 border-gray-200 rounded-2xl focus:outline-none focus:border-pink-400 focus:ring-4 focus:ring-pink-100 transition-all duration-200 bg-gray-50/50"
                 required
                 autoFocus
@@ -116,7 +126,7 @@ export default function UserRegistrationModal({ passcode, onRegister, onLogout }
               className="flex-1 py-4 px-6 border-2 border-gray-300 rounded-2xl text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-all duration-200 font-medium"
               disabled={loading}
             >
-              ログアウト
+              {t("logout")}
             </button>
             <button
               type="submit"
@@ -137,14 +147,14 @@ export default function UserRegistrationModal({ passcode, onRegister, onLogout }
                       d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                     ></path>
                   </svg>
-                  登録中...
+                  {t("registering")}
                 </div>
               ) : (
                 <div className="flex items-center justify-center gap-2">
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
-                  登録
+                  {t("register")}
                 </div>
               )}
             </button>
