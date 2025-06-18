@@ -461,7 +461,7 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
   const [mediaFilter, setMediaFilter] = useState<"all" | "photo" | "video">("all");
 
   // 🆕 多言語対応フックを追加
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
 
   // デバウンスフィルター
   const debouncedMediaFilter = useDebounce(mediaFilter, 300);
@@ -1093,7 +1093,7 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
               <div className="text-white">
                 <p className="font-semibold text-lg">{selectedAlbum.uploaderName || selectedAlbum.uploadedBy}</p>
                 <p className="text-sm opacity-80">
-                  {new Date(selectedAlbum.uploadedAt).toLocaleDateString("ja-JP", {
+                  {new Date(selectedAlbum.uploadedAt).toLocaleDateString(language === "ja" ? "ja-JP" : "en-US", {
                     year: "numeric",
                     month: "short",
                     day: "numeric",
