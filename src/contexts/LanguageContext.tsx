@@ -118,6 +118,65 @@ const translations: Translations = {
     ja: "登録中...",
     en: "Registering...",
   },
+
+  // PhotoGallery関連
+  photo: {
+    ja: "写真",
+    en: "Photo",
+  },
+  video: {
+    ja: "動画",
+    en: "Video",
+  },
+  image: {
+    ja: "画像",
+    en: "Image",
+  },
+  deleted: {
+    ja: "削除済み",
+    en: "Deleted",
+  },
+  loading_photos: {
+    ja: "写真を読み込み中...",
+    en: "Loading photos...",
+  },
+  no_photos_yet: {
+    ja: "まだ写真がありません",
+    en: "No photos yet",
+  },
+  upload_first_photo: {
+    ja: "最初の写真をアップロードしてみましょう！",
+    en: "Upload your first photo!",
+  },
+  no_photos_uploaded: {
+    ja: "まだ写真がアップロードされていません",
+    en: "No photos uploaded yet",
+  },
+  no_photos_found: {
+    ja: "写真がありません",
+    en: "No photos found",
+  },
+  no_videos_found: {
+    ja: "動画がありません",
+    en: "No videos found",
+  },
+  share_first_memory: {
+    ja: "最初の思い出を共有してみましょう！",
+    en: "Let's share your first memory!",
+  },
+  try_other_media_types: {
+    ja: "他のメディアタイプを確認してみてください",
+    en: "Try checking other media types",
+  },
+
+  post_order: {
+    ja: "投稿順",
+    en: "Date",
+  },
+  popularity_order: {
+    ja: "人気順",
+    en: "Popular",
+  },
 };
 
 const LanguageContext = createContext<LanguageContextType | undefined>(undefined);

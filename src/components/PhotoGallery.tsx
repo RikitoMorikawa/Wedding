@@ -5,6 +5,7 @@ import { Amplify } from "aws-amplify";
 import { getUrl } from "aws-amplify/storage";
 import awsconfig from "../aws-exports";
 import ConfirmDialog from "./ConfirmDialog";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 // Amplifyの設定
 Amplify.configure(awsconfig);
@@ -125,6 +126,7 @@ const useImagePreloader = (imageUrls: string[], priority: number = 5) => {
 };
 
 // ===== 動画サムネイル生成フック（最適化版） =====
+// ===== 動画サムネイル生成フック（改善版） =====
 const useVideoThumbnail = (videoUrl: string, timeStamp: number = 0.1) => {
   const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -149,7 +151,10 @@ const useVideoThumbnail = (videoUrl: string, timeStamp: number = 0.1) => {
       video.preload = "metadata";
 
       const dataURL = await new Promise<string>((resolve, reject) => {
-        const timeoutId = setTimeout(() => reject(new Error("Timeout")), 10000);
+        const timeoutId = setTimeout(() => {
+          console.warn("Video thumbnail generation timeout for:", videoUrl.substring(0, 50) + "...");
+          reject(new Error("Timeout"));
+        }, 10000);
 
         video.onloadedmetadata = () => {
           video.currentTime = timeStamp;
@@ -173,26 +178,43 @@ const useVideoThumbnail = (videoUrl: string, timeStamp: number = 0.1) => {
               const result = canvas.toDataURL("image/jpeg", 0.7);
               resolve(result);
             } else {
+              console.warn("Canvas context not available for video:", videoUrl.substring(0, 50) + "...");
               reject(new Error("Canvas context not available"));
             }
           } catch (error) {
             clearTimeout(timeoutId);
+            console.warn("Error during video thumbnail generation:", error);
             reject(error);
           }
         };
 
-        video.onerror = () => {
+        video.onerror = (event) => {
           clearTimeout(timeoutId);
-          reject(new Error("Video load error"));
+          // より詳細なエラー情報をログ出力（但しコンソールエラーは抑制）
+          console.warn("Video load failed (likely CORS or network issue):", {
+            url: videoUrl.substring(0, 50) + "...",
+            event: event
+          });
+          // エラーをrejectせずに、単純にnullを返すことでサムネイル生成をスキップ
+          resolve(""); // 空文字列を返してエラーを回避
         };
 
         video.src = videoUrl;
       });
 
-      cache.current.set(videoUrl, dataURL);
-      setThumbnailUrl(dataURL);
+      if (dataURL && dataURL.length > 0) {
+        cache.current.set(videoUrl, dataURL);
+        setThumbnailUrl(dataURL);
+      } else {
+        // サムネイル生成に失敗した場合はnullのまま
+        setThumbnailUrl(null);
+      }
     } catch (error) {
-      console.error("Failed to generate thumbnail:", error);
+      // ログレベルをwarnに変更してエラーの深刻度を下げる
+      console.warn("Failed to generate video thumbnail:", {
+        url: videoUrl.substring(0, 50) + "...",
+        error: error instanceof Error ? error.message : "Unknown error"
+      });
       setThumbnailUrl(null);
     } finally {
       setLoading(false);
@@ -207,54 +229,61 @@ const useVideoThumbnail = (videoUrl: string, timeStamp: number = 0.1) => {
 };
 
 // ===== ローディング状態コンポーネント =====
-const LoadingState = memo(() => (
-  <div className="flex items-center justify-center py-12">
-    <div className="flex flex-col items-center space-y-4">
-      <div className="w-8 h-8 border-2 border-pink-300 border-t-pink-600 rounded-full animate-spin"></div>
-      <p className="text-gray-600">写真を読み込み中...</p>
+const LoadingState = memo(() => {
+  const { t } = useLanguage();
+
+  return (
+    <div className="flex items-center justify-center py-12">
+      <div className="flex flex-col items-center space-y-4">
+        <div className="w-8 h-8 border-2 border-pink-300 border-t-pink-600 rounded-full animate-spin"></div>
+        <p className="text-gray-600">{t("loading_photos")}</p>
+      </div>
     </div>
-  </div>
-));
+  );
+});
 
 LoadingState.displayName = "LoadingState";
 
 // ===== 空状態コンポーネント =====
-const EmptyState = memo(({ mediaFilter, isAlbumsEmpty = false }: { mediaFilter: "all" | "photo" | "video"; isAlbumsEmpty?: boolean }) => (
-  <div className="text-center py-12">
-    {isAlbumsEmpty ? (
-      <>
-        <div className="w-16 h-16 mx-auto mb-4 bg-gray-100 rounded-full flex items-center justify-center">
-          <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 002 2v12a2 2 0 002 2z"
-            />
-          </svg>
-        </div>
-        <h3 className="text-lg font-semibold text-gray-800 mb-2">まだ写真がありません</h3>
-        <p className="text-gray-600">最初の写真をアップロードしてみましょう！</p>
-      </>
-    ) : (
-      <>
-        <div className="text-6xl mb-4">📸</div>
-        <p className="text-gray-500 text-lg">
-          {mediaFilter === "all" ? "まだ写真がアップロードされていません" : mediaFilter === "photo" ? "写真がありません" : "動画がありません"}
-        </p>
-        <p className="text-gray-400 text-sm mt-2">
-          {mediaFilter === "all" ? "最初の思い出を共有してみましょう！" : "他のメディアタイプを確認してみてください"}
-        </p>
-      </>
-    )}
-  </div>
-));
+const EmptyState = memo(({ mediaFilter, isAlbumsEmpty = false }: { mediaFilter: "all" | "photo" | "video"; isAlbumsEmpty?: boolean }) => {
+  const { t } = useLanguage();
+
+  return (
+    <div className="text-center py-12">
+      {isAlbumsEmpty ? (
+        <>
+          <div className="w-16 h-16 mx-auto mb-4 bg-gray-100 rounded-full flex items-center justify-center">
+            <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 002 2v12a2 2 0 002 2z"
+              />
+            </svg>
+          </div>
+          <h3 className="text-lg font-semibold text-gray-800 mb-2">{t("no_photos_yet")}</h3>
+          <p className="text-gray-600">{t("upload_first_photo")}</p>
+        </>
+      ) : (
+        <>
+          <div className="text-6xl mb-4">📸</div>
+          <p className="text-gray-500 text-lg">
+            {mediaFilter === "all" ? t("no_photos_uploaded") : mediaFilter === "photo" ? t("no_photos_found") : t("no_videos_found")}
+          </p>
+          <p className="text-gray-400 text-sm mt-2">{mediaFilter === "all" ? t("share_first_memory") : t("try_other_media_types")}</p>
+        </>
+      )}
+    </div>
+  );
+});
 
 EmptyState.displayName = "EmptyState";
 
 // ===== 最適化されたアルバムアイテム =====
 const AlbumItem = memo(({ album, onClick, isOwner }: { album: Album; onClick: () => void; isOwner: (album: Album) => boolean }) => {
   const [ref, isVisible] = useLazyLoading(0.1);
+  const { t } = useLanguage();
 
   const { thumbnailUrl, loading } = useVideoThumbnail(album.mainPhoto?.mediaType === "video" && album.mainPhotoUrl && isVisible ? album.mainPhotoUrl : "", 0.1);
 
@@ -287,7 +316,7 @@ const AlbumItem = memo(({ album, onClick, isOwner }: { album: Album; onClick: ()
                   <path d="M8 5v14l11-7z" />
                 </svg>
               </div>
-              <p className="text-xs text-gray-500">{album.mainPhoto?.mediaType === "video" ? "動画" : "画像"}</p>
+              <p className="text-xs text-gray-500">{album.mainPhoto?.mediaType === "video" ? t("video") : t("image")}</p>
             </div>
           </div>
         )
@@ -323,7 +352,7 @@ const AlbumItem = memo(({ album, onClick, isOwner }: { album: Album; onClick: ()
         </div>
       )}
 
-      {/* 削除済みバッジ */}
+      {/* 削除済みバッジ - 多言語対応 */}
       {isOwner(album) && album.isPublic === false && (
         <div className="absolute top-2 right-2 ml-1">
           <div className="bg-red-600/90 backdrop-blur-sm rounded-lg px-2 py-1 flex items-center space-x-1">
@@ -335,7 +364,7 @@ const AlbumItem = memo(({ album, onClick, isOwner }: { album: Album; onClick: ()
                 d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
               />
             </svg>
-            <span className="text-white text-xs font-medium">削除済み</span>
+            <span className="text-white text-xs font-medium">{t("deleted")}</span>
           </div>
         </div>
       )}
@@ -365,6 +394,7 @@ AlbumItem.displayName = "AlbumItem";
 
 // ===== 最適化されたサムネイルアイテム =====
 const ThumbnailItem = memo(({ photo, index, isSelected, onClick }: { photo: Photo; index: number; isSelected: boolean; onClick: () => void }) => {
+  const { t } = useLanguage();
   const { thumbnailUrl, loading } = useVideoThumbnail(photo.mediaType === "video" && photo.url ? photo.url : "", 0.1);
 
   const displayImage = useMemo(() => {
@@ -384,7 +414,7 @@ const ThumbnailItem = memo(({ photo, index, isSelected, onClick }: { photo: Phot
       {displayImage ? (
         <img
           src={displayImage}
-          alt={`${photo.mediaType === "video" ? "動画" : "写真"} ${index + 1}`}
+          alt={`${photo.mediaType === "video" ? t("video") : t("photo")} ${index + 1}`}
           className="w-full h-full object-cover"
           loading="lazy"
           decoding="async"
@@ -429,6 +459,9 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
   const [visibilityLoading, setVisibilityLoading] = useState(false);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [mediaFilter, setMediaFilter] = useState<"all" | "photo" | "video">("all");
+
+  // 🆕 多言語対応フックを追加
+  const { t } = useLanguage();
 
   // デバウンスフィルター
   const debouncedMediaFilter = useDebounce(mediaFilter, 300);
@@ -966,7 +999,7 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
               mediaFilter === "all" ? "bg-gradient-to-r from-pink-500 to-rose-500 text-white shadow-md" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
             }`}
           >
-            すべて
+            {t("all")}
           </button>
           <button
             onClick={() => setMediaFilter("photo")}
@@ -982,7 +1015,7 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
                 d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
               />
             </svg>
-            <span>写真のみ</span>
+            <span>{t("photo")}</span>
           </button>
           <button
             onClick={() => setMediaFilter("video")}
@@ -998,7 +1031,7 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
                 d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
               />
             </svg>
-            <span>動画のみ</span>
+            <span>{t("video")}</span>
           </button>
         </div>
       </div>
@@ -1021,7 +1054,7 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
                   d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
                 />
               </svg>
-              <span>投稿順</span>
+              <span>{t("post_order")}</span>
             </div>
           </button>
           <button
@@ -1034,7 +1067,7 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
               <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
               </svg>
-              <span>人気順</span>
+              <span>{t("popularity_order")}</span>
             </div>
           </button>
         </div>
