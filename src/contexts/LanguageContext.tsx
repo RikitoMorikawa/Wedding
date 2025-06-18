@@ -224,6 +224,172 @@ const translations: Translations = {
     ja: "はい",
     en: "Yes",
   },
+
+  // PhotoUpload関連
+  select_files: {
+    ja: "を選択",
+    en: "Select",
+  },
+  tap_to_select: {
+    ja: "をタップして選択",
+    en: "Tap to select",
+  },
+  add_more: {
+    ja: "追加選択",
+    en: "Add more",
+  },
+  photo_files_only: {
+    ja: "写真ファイルのみ選択できます",
+    en: "Only photo files can be selected",
+  },
+  video_files_only: {
+    ja: "動画ファイルのみ選択できます",
+    en: "Only video files can be selected",
+  },
+  select_file_type: {
+    ja: "ファイルを選択してください",
+    en: "Please select files",
+  },
+  file_count_limit: {
+    ja: "は最大{max}個まで選択できます",
+    en: "Maximum {max} files can be selected",
+  },
+  current_count: {
+    ja: "現在: {current}個",
+    en: "Current: {current}",
+  },
+  adding_count: {
+    ja: "追加しようとした数: {adding}個",
+    en: "Trying to add: {adding}",
+  },
+  limit_count: {
+    ja: "制限: {limit}個",
+    en: "Limit: {limit}",
+  },
+  file_size_limit: {
+    ja: "ファイルは{size}以下にしてください",
+    en: "Files must be {size} or smaller",
+  },
+  pro_photo_support: {
+    ja: "（プロ撮影・高画質対応）",
+    en: "(Professional/High quality support)",
+  },
+  video_duration_support: {
+    ja: "（約1-2分の動画対応）",
+    en: "(1-2 minute video support)",
+  },
+  files_too_large: {
+    ja: "大きすぎるファイル:",
+    en: "Files too large:",
+  },
+  total_size_exceeded: {
+    ja: "合計ファイルサイズが制限を超えています",
+    en: "Total file size exceeds limit",
+  },
+  current_total: {
+    ja: "現在の合計: {size}MB",
+    en: "Current total: {size}MB",
+  },
+  size_limit: {
+    ja: "制限: {limit}MB",
+    en: "Limit: {limit}MB",
+  },
+  reduce_files_message: {
+    ja: "ファイル数を減らすか、より小さなファイルを選択してください",
+    en: "Please reduce the number of files or select smaller files",
+  },
+  main_photo: {
+    ja: "（メイン写真）",
+    en: "(Main photo)",
+  },
+  main_video: {
+    ja: "（メイン動画）",
+    en: "(Main video)",
+  },
+  comment_optional: {
+    ja: "コメント（任意）",
+    en: "Comment (Optional)",
+  },
+  album_comment_note: {
+    ja: "※アルバム全体のコメントです",
+    en: "* Comment for the entire album",
+  },
+  album_comment_placeholder: {
+    ja: "このアルバムについて一言...",
+    en: "A word about this album...",
+  },
+  single_comment_placeholder: {
+    ja: "について一言...",
+    en: "A word about this",
+  },
+  uploading: {
+    ja: "アップロード中...",
+    en: "Uploading...",
+  },
+  upload_files: {
+    ja: "をアップロード",
+    en: "Upload",
+  },
+  bulk_upload: {
+    ja: "個を一括アップロード",
+    en: "Bulk upload",
+  },
+  upload_error: {
+    ja: "アップロードエラー",
+    en: "Upload Error",
+  },
+  duplicate_error: {
+    ja: "重複エラー\n同じファイルが既に存在します。しばらく待ってから再試行してください。",
+    en: "Duplicate Error\nThe same file already exists. Please wait and try again.",
+  },
+  server_overload_error: {
+    ja: "サーバー負荷エラー\nサーバーが一時的に混雑しています。少し待ってから再試行してください。",
+    en: "Server Overload Error\nThe server is temporarily busy. Please wait and try again.",
+  },
+  unexpected_error: {
+    ja: "予期しないエラーが発生しました",
+    en: "An unexpected error occurred",
+  },
+  time_estimate_1_2min: {
+    ja: "（約1-2分対応）",
+    en: "(1-2 min support)",
+  },
+  file_formats_photo: {
+    ja: "JPG, PNG, GIF, WebP（最大50MB/枚）",
+    en: "JPG, PNG, GIF, WebP (Max 50MB each)",
+  },
+  file_formats_video: {
+    ja: "MP4, MOV, AVI, WebM（最大200MB/枚）",
+    en: "MP4, MOV, AVI, WebM (Max 200MB each)",
+  },
+  max_files_total_size: {
+    ja: "最大{maxFiles}個 | 合計{totalSize}MB",
+    en: "Max {maxFiles} files | Total {totalSize}MB",
+  },
+  selected_files: {
+    ja: "選択中の",
+    en: "Selected",
+  },
+  files_count: {
+    ja: "個",
+    en: "files",
+  },
+  limit_reached: {
+    ja: "制限に達しました",
+    en: "Limit reached",
+  },
+  remove_all: {
+    ja: "すべて削除",
+    en: "Remove All",
+  },
+  add_files: {
+    ja: "を追加",
+    en: "Add more",
+  },
+  please_select: {
+    ja: "を選択してください",
+    en: "Please select",
+  },
 };
 
 const LanguageContext = createContext<LanguageContextType | undefined>(undefined);

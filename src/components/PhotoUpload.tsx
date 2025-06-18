@@ -8,6 +8,7 @@ import { v4 as uuidv4 } from "uuid";
 import awsconfig from "../aws-exports";
 import WeddingConfirmDialog from "./WeddingConfirmDialog";
 import BubblyButton from "./BubblyButton";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 Amplify.configure(awsconfig);
 
@@ -37,6 +38,9 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
   const [caption, setCaption] = useState("");
   const [showWeddingConfirm, setShowWeddingConfirm] = useState(false);
 
+  // 🆕 多言語対応
+  const { t } = useLanguage();
+
   const buttonRef = useRef<HTMLButtonElement>(null);
   const API_BASE = awsconfig.aws_cloud_logic_custom[0].endpoint;
 
@@ -56,26 +60,29 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
     if (selectedMediaType === "photo") {
       validFiles = files.filter((file) => file.type.startsWith("image/"));
       if (validFiles.length !== files.length) {
-        alert("写真ファイルのみ選択できます");
+        alert(t("photo_files_only"));
       }
     } else if (selectedMediaType === "video") {
       validFiles = files.filter((file) => file.type.startsWith("video/"));
       if (validFiles.length !== files.length) {
-        alert("動画ファイルのみ選択できます");
+        alert(t("video_files_only"));
       }
     }
 
     if (validFiles.length === 0) {
-      alert(`${selectedMediaType === "photo" ? "画像" : "動画"}ファイルを選択してください`);
+      alert(t("select_file_type").replace("ファイル", selectedMediaType === "photo" ? t("image") : t("video")));
       return;
     }
 
-    // ✅ メディアタイプ別枚数制限チェック
+    // メディアタイプ別枚数制限チェック
     if (selectedFiles.length + validFiles.length > maxFiles) {
-      const mediaTypeText = selectedMediaType === "photo" ? "写真" : "動画";
-      const timeEstimate = selectedMediaType === "photo" ? "" : "（約1-2分対応）";
+      const mediaTypeText = selectedMediaType === "photo" ? t("photo") : t("video");
+      const timeEstimate = selectedMediaType === "photo" ? "" : t("time_estimate_1_2min");
       alert(
-        `${mediaTypeText}は最大${maxFiles}個まで選択できます${timeEstimate}\n\n現在: ${selectedFiles.length}個\n追加しようとした数: ${validFiles.length}個\n制限: ${maxFiles}個`
+        `${mediaTypeText}${t("file_count_limit").replace("{max}", maxFiles.toString())}${timeEstimate}\n\n${t("current_count").replace(
+          "{current}",
+          selectedFiles.length.toString()
+        )}\n${t("adding_count").replace("{adding}", validFiles.length.toString())}\n${t("limit_count").replace("{limit}", maxFiles.toString())}`
       );
       return;
     }
@@ -86,10 +93,10 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
 
     if (oversizedFiles.length > 0) {
       const maxSizeText = getMaxSizeText();
-      const mediaTypeText = selectedMediaType === "photo" ? "画像" : "動画";
-      const description = selectedMediaType === "photo" ? "（プロ撮影・高画質対応）" : "（約1-2分の動画対応）";
+      const mediaTypeText = selectedMediaType === "photo" ? t("image") : t("video");
+      const description = selectedMediaType === "photo" ? t("pro_photo_support") : t("video_duration_support");
       alert(
-        `${mediaTypeText}ファイルは${maxSizeText}以下にしてください${description}\n\n大きすぎるファイル:\n${oversizedFiles
+        `${mediaTypeText}${t("file_size_limit").replace("{size}", maxSizeText)}${description}\n\n${t("files_too_large")}\n${oversizedFiles
           .map((f) => `${f.name} (${(f.size / (1024 * 1024)).toFixed(1)}MB)`)
           .join("\n")}`
       );
@@ -105,7 +112,9 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
       const totalSizeMB = (totalSize / (1024 * 1024)).toFixed(1);
       const maxTotalSizeMB = (MAX_TOTAL_SIZE / (1024 * 1024)).toFixed(0);
       alert(
-        `合計ファイルサイズが制限を超えています\n\n現在の合計: ${totalSizeMB}MB\n制限: ${maxTotalSizeMB}MB\n\nファイル数を減らすか、より小さなファイルを選択してください`
+        `${t("total_size_exceeded")}\n\n${t("current_total").replace("{size}", totalSizeMB)}\n${t("size_limit").replace("{limit}", maxTotalSizeMB)}\n\n${t(
+          "reduce_files_message"
+        )}`
       );
       return;
     }
@@ -318,7 +327,9 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
         {/* ファイル選択エリア */}
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-3">
-            {selectedMediaType === "photo" ? "写真" : "動画"}を選択 ({selectedFiles.length}/{maxFiles}個)
+            {selectedMediaType === "photo" ? t("photo") : t("video")}
+            {t("select_files")} ({selectedFiles.length}/{maxFiles}
+            {t("files_count")})
             {selectedFiles.length > 0 && (
               <span className={`text-xs ml-2 ${totalFileSize > maxTotalSizeMB * 0.8 ? "text-orange-600" : "text-gray-500"}`}>
                 ({totalFileSize.toFixed(1)}MB / {maxTotalSizeMB}MB)
@@ -334,14 +345,12 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
               <div className="text-3xl mb-2">{selectedMediaType === "photo" ? "📷" : "🎥"}</div>
               <p className="text-sm text-pink-600 font-medium">
                 {selectedFiles.length === 0
-                  ? `${selectedMediaType === "photo" ? "写真" : "動画"}をタップして選択`
-                  : `${selectedMediaType === "photo" ? "写真" : "動画"}を追加`}
+                  ? `${selectedMediaType === "photo" ? t("photo") : t("video")}${t("tap_to_select")}`
+                  : `${selectedMediaType === "photo" ? t("photo") : t("video")}${t("add_files")}`}
               </p>
-              <p className="text-xs text-gray-500 mt-1">
-                {selectedMediaType === "photo" ? "JPG, PNG, GIF, WebP（最大50MB/枚）" : "MP4, MOV, AVI, WebM（最大200MB/枚）"}
-              </p>
+              <p className="text-xs text-gray-500 mt-1">{selectedMediaType === "photo" ? t("file_formats_photo") : t("file_formats_video")}</p>
               <p className="text-xs text-gray-400 mt-1">
-                最大{maxFiles}個 | 合計{maxTotalSizeMB}MB
+                {t("max_files_total_size").replace("{maxFiles}", maxFiles.toString()).replace("{totalSize}", maxTotalSizeMB.toString())}
               </p>
             </div>
             <input
@@ -361,14 +370,16 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
           <div className="bg-pink-50/50 rounded-2xl p-3">
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-sm font-semibold text-gray-700">
-                選択中の{selectedMediaType === "photo" ? "写真" : "動画"} ({selectedFiles.length}/{maxFiles}個)
+                {t("selected_files")}
+                {selectedMediaType === "photo" ? t("photo") : t("video")} ({selectedFiles.length}/{maxFiles}
+                {t("files_count")})
                 {((selectedMediaType === "video" && selectedFiles.length === maxFiles) ||
                   (selectedMediaType === "photo" && selectedFiles.length === maxFiles)) && (
-                  <span className="ml-2 text-xs text-orange-600">制限に達しました</span>
+                  <span className="ml-2 text-xs text-orange-600">{t("limit_reached")}</span>
                 )}
               </h3>
               <button onClick={removeAllFiles} className="text-xs text-red-500 hover:text-red-700 font-medium" disabled={uploading}>
-                すべて削除
+                {t("remove_all")}
               </button>
             </div>
             <div className="space-y-2 max-h-40 overflow-y-auto">
@@ -389,7 +400,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
                       </div>
                       <p className="text-xs text-gray-500">
                         {(selectedFile.file.size / (1024 * 1024)).toFixed(1)}MB
-                        {index === 0 && <span className="ml-1 text-pink-600">（メイン{selectedMediaType === "photo" ? "写真" : "動画"}）</span>}
+                        {index === 0 && <span className="ml-1 text-pink-600">{selectedMediaType === "photo" ? t("main_photo") : t("main_video")}</span>}
                       </p>
                     </div>
                   </div>
@@ -411,15 +422,19 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
         {/* キャプション入力 */}
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-3">
-            コメント（任意）
-            {selectedFiles.length > 1 && <span className="text-xs text-gray-500 ml-2">※アルバム全体のコメントです</span>}
+            {t("comment_optional")}
+            {selectedFiles.length > 1 && <span className="text-xs text-gray-500 ml-2">{t("album_comment_note")}</span>}
           </label>
           <textarea
             value={caption}
             onChange={(e) => setCaption(e.target.value)}
             rows={3}
             className="w-full px-4 py-3 border-2 border-gray-200 rounded-2xl focus:outline-none focus:border-pink-400 focus:ring-4 focus:ring-pink-100 transition-all duration-200 bg-gray-50/50 resize-none"
-            placeholder={selectedFiles.length > 1 ? "このアルバムについて一言..." : `この${selectedMediaType === "photo" ? "写真" : "動画"}について一言...`}
+            placeholder={
+              selectedFiles.length > 1
+                ? t("album_comment_placeholder")
+                : t("single_comment_placeholder")
+            }
             disabled={uploading}
           />
         </div>
@@ -430,15 +445,15 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
             {uploading ? (
               <div className="flex items-center justify-center space-x-2">
                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                <span>アップロード中...</span>
+                <span>{t("uploading")}</span>
               </div>
             ) : (
               `${
                 selectedFiles.length === 0
-                  ? `${selectedMediaType === "photo" ? "写真" : "動画"}を選択してください`
+                  ? `${selectedMediaType === "photo" ? t("photo") : t("video")}${t("please_select")}`
                   : selectedFiles.length === 1
-                  ? `${selectedMediaType === "photo" ? "写真" : "動画"}をアップロード`
-                  : `${selectedFiles.length}個を一括アップロード`
+                  ? `${selectedMediaType === "photo" ? t("photo") : t("video")}${t("upload_files")}`
+                  : `${selectedFiles.length}${t("files_count")}${t("bulk_upload")}`
               }`
             )}
           </BubblyButton>
