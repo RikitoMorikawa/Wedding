@@ -71,35 +71,35 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
       validFiles = files.filter((file) => file.type.startsWith("image/"));
       if (validFiles.length !== files.length) {
         setErrorType("file_type");
-        setErrorDetails("写真ファイルのみ選択できます");
+        setErrorDetails(t("photo_files_only"));
         return;
       }
     } else if (selectedMediaType === "video") {
       validFiles = files.filter((file) => file.type.startsWith("video/"));
       if (validFiles.length !== files.length) {
         setErrorType("file_type");
-        setErrorDetails("動画ファイルのみ選択できます");
+        setErrorDetails(t("video_files_only"));
         return;
       }
     }
 
     if (validFiles.length === 0) {
       setErrorType("file_type");
-      setErrorDetails("ファイルを選択してください");
+      setErrorDetails(t("select_file_type"));
       return;
     }
 
     // ✅ 動画の場合は既に選択済みファイルがあれば警告
     if (selectedMediaType === "video" && selectedFiles.length > 0) {
       setErrorType("file_count");
-      setErrorDetails("動画は1件までアップロードできます");
+      setErrorDetails(t("video_limit_one"));
       return;
     }
 
     // ✅ 動画の場合は複数選択を防ぐ
     if (selectedMediaType === "video" && validFiles.length > 1) {
       setErrorType("file_count");
-      setErrorDetails("動画は1件ずつ選択してください");
+      setErrorDetails(t("video_one_at_time"));
       return;
     }
 
@@ -107,9 +107,9 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
     if (selectedFiles.length + validFiles.length > maxFiles) {
       setErrorType("file_count");
       if (selectedMediaType === "video") {
-        setErrorDetails("動画は1件までアップロードできます");
+        setErrorDetails(t("video_limit_one"));
       } else {
-        setErrorDetails(`${maxFiles}個まで`);
+        setErrorDetails(`${maxFiles}${t("files_count")}${t("max")}`);
       }
       return;
     }
@@ -121,7 +121,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
     if (oversizedFiles.length > 0) {
       const maxSizeText = getMaxSizeText();
       setErrorType("file_size");
-      setErrorDetails(`${maxSizeText}まで`);
+      setErrorDetails(`${maxSizeText}${t("max")}`);
       return;
     }
 
@@ -339,9 +339,9 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
 
     switch (errorType) {
       case "file_count":
-        return `枚数オーバー（${errorDetails}）`;
+        return `${t("count_over")}（${errorDetails}）`;
       case "file_size":
-        return `サイズオーバー（${errorDetails}）`;
+        return `${t("size_over")}（${errorDetails}）`;
       case "total_size":
         return `サイズオーバー（${errorDetails}）`;
       case "file_type":
@@ -375,16 +375,12 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
               <div className="text-3xl mb-2">{selectedMediaType === "photo" ? "📷" : "🎥"}</div>
               <p className={`text-sm font-medium ${errorType ? "text-red-600" : "text-pink-600"}`}>
                 {selectedFiles.length === 0
-                  ? `${selectedMediaType === "photo" ? "写真" : "動画"}をタップして選択`
-                  : `${selectedMediaType === "photo" ? "写真" : "動画"}を追加`}
+                  ? `${selectedMediaType === "photo" ? t("photo") : t("video")}${t("tap_to_select")}`
+                  : `${selectedMediaType === "photo" ? t("photo") : t("video")}${t("add_files")}`}
               </p>
               <p className="text-xs text-gray-500 mt-1">{selectedMediaType === "photo" ? t("file_formats_photo") : t("file_formats_video")}</p>
               {/* ✅ 動画の場合は1件制限と3分対応を明示 */}
-              {selectedMediaType === "video" && (
-                <p className="text-xs text-purple-600 mt-1 font-medium">
-                  動画は1件まで・約3分程度まで対応
-                </p>
-              )}
+              {selectedMediaType === "video" && <p className="text-xs text-purple-600 mt-1 font-medium">{t("video_limit_3min")}</p>}
             </div>
             <input
               id="file-input"
@@ -452,9 +448,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
                       <p className="text-xs text-gray-500">
                         {(selectedFile.file.size / (1024 * 1024)).toFixed(1)}MB
                         {index === 0 && selectedFiles.length > 1 && (
-                          <span className="ml-1 text-pink-600">
-                            {selectedMediaType === "photo" ? t("main_photo") : t("main_video")}
-                          </span>
+                          <span className="ml-1 text-pink-600">{selectedMediaType === "photo" ? t("main_photo") : t("main_video")}</span>
                         )}
                       </p>
                     </div>

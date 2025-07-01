@@ -359,8 +359,8 @@ const translations: Translations = {
     en: "JPG, PNG, GIF, WebP (Max 50MB each)",
   },
   file_formats_video: {
-    ja: "MP4, MOV, AVI, WebM（最大200MB/枚）",
-    en: "MP4, MOV, AVI, WebM (Max 200MB each)",
+    ja: "MP4, MOV, AVI, WebM（最大300MB/件）", // 300MBに更新
+    en: "MP4, MOV, AVI, WebM (Max 300MB each)", // 300MBに更新
   },
   max_files_total_size: {
     ja: "最大{maxFiles}個 | 合計{totalSize}MB",
@@ -411,6 +411,19 @@ const translations: Translations = {
   size_over: {
     ja: "サイズオーバー",
     en: "Size exceeded",
+  },
+
+  video_limit_one: {
+    ja: "動画は1件までアップロードできます",
+    en: "Video upload limited to 1 file",
+  },
+  video_one_at_time: {
+    ja: "動画は1件ずつ選択してください",
+    en: "Please select videos one at a time",
+  },
+  video_limit_3min: {
+    ja: "動画は1件まで",
+    en: "Up to 1 video",
   },
 };
 
