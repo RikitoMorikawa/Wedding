@@ -1,43 +1,8 @@
 {
   "version": 1,
   "paths": {
-    "/photos": {
-      "name": "/photos",
-      "lambdaFunction": "weddingPhotosFunction",
-      "permissions": {
-        "setting": "open"
-      }
-    },
-    "/photos/{proxy+}": {
-      "name": "/photos/{proxy+}",
-      "lambdaFunction": "weddingPhotosFunction",
-      "permissions": {
-        "setting": "open"
-      }
-    },
-    "/favorites": {
-      "name": "/favorites",
-      "lambdaFunction": "weddingPhotosFunction",
-      "permissions": {
-        "setting": "open"
-      }
-    },
-    "/favorites/{proxy+}": {
-      "name": "/favorites/{proxy+}",
-      "lambdaFunction": "weddingPhotosFunction",
-      "permissions": {
-        "setting": "open"
-      }
-    },
-    "/albums": {
-      "name": "/albums",
-      "lambdaFunction": "weddingPhotosFunction",
-      "permissions": {
-        "setting": "open"
-      }
-    },
-    "/albums/{proxy+}": {
-      "name": "/albums/{proxy+}",
+    "/{proxy+}": {
+      "name": "/{proxy+}",
       "lambdaFunction": "weddingPhotosFunction",
       "permissions": {
         "setting": "open"
