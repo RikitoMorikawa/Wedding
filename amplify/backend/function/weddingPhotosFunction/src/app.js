@@ -4,6 +4,12 @@ const awsServerlessExpressMiddleware = require("aws-serverless-express/middlewar
 const { TransactWriteCommand } = require("@aws-sdk/lib-dynamodb");
 const { MediaConvertClient, CreateJobCommand, DescribeEndpointsCommand, GetJobCommand } = require("@aws-sdk/client-mediaconvert");
 
+// ✅ 追加：ファイルシステムとchild_process
+const fs = require('fs');
+const { exec } = require('child_process');
+const { promisify } = require('util');
+const execPromise = promisify(exec);
+
 // ✅ 必要なimport（S3とDynamoDB両方）
 const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
 const {
