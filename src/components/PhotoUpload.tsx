@@ -309,32 +309,6 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
       // ✅ Step 4: 動画のサムネイル生成をトリガー（ここに移動）
       const videoFiles = successfulUploads.filter((result) => result.mediaType === "video");
 
-      // performBatchUpload関数内のサムネイル生成部分にデバッグログを追加
-
-      // src/components/PhotoUpload.tsx
-      // performBatchUpload関数のサムネイル生成部分にデバッグログを追加
-
-      // エラーハンドリング用のユーティリティ関数
-      const getErrorMessage = (error: unknown): string => {
-        if (error instanceof Error) return error.message;
-        if (typeof error === "string") return error;
-        return "Unknown error occurred";
-      };
-
-      const getErrorDetails = (error: unknown) => {
-        if (error instanceof Error) {
-          return {
-            name: error.name,
-            message: error.message,
-            stack: error.stack,
-          };
-        }
-        return {
-          message: String(error),
-          type: typeof error,
-        };
-      };
-
 
       // 型ガード関数
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -350,6 +324,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
         console.log(`🎬 ${videoFiles.length}個の動画のサムネイル生成を開始...`);
         console.log("📹 動画ファイル詳細:", JSON.stringify(videoFiles, null, 2));
 
+        // PhotoUpload.tsx - 完全修正版（TypeScriptエラー解決）
         for (const videoFile of videoFiles) {
           try {
             // 型ガード: 成功したアップロードファイルかチェック
@@ -399,26 +374,51 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
               continue;
             }
 
-            // HTML5 Videoを使用してサムネイル生成（1-2秒で完了）
-            let thumbnailBlob: Blob;
+            console.log(`🎬 動画サムネイル生成試行: ${originalFile.name}, ${originalFile.type}, ${originalFile.size} bytes`);
 
-            try {
-              console.log(`🎬 動画サムネイル生成試行: ${originalFile.name}, ${originalFile.type}, ${originalFile.size} bytes`);
+            // ⭐ 修正: サムネイル生成を関数化してPromiseで返す
+            const generateThumbnailWithFallback = async (): Promise<Blob> => {
+              // 複数タイムスタンプでの試行
+              const timeOffsets = [0.5, 1.0, 2.0, 0]; // 試行順序
 
-              thumbnailBlob = await generateVideoThumbnail(originalFile, {
-                width: 400,
-                height: 300,
-                timeOffset: 0, // 最初のフレーム（より安全）
-                quality: 0.8,
+              for (const timeOffset of timeOffsets) {
+                try {
+                  const blob = await generateVideoThumbnail(originalFile, {
+                    width: 400,
+                    height: 300,
+                    timeOffset: timeOffset,
+                    quality: 0.8,
+                  });
+
+                  console.log(`✅ サムネイル生成成功 (${timeOffset}秒): ${blob.size} bytes`);
+                  return blob; // 成功したら即座に返す
+                } catch (timeOffsetError) {
+                  console.warn(`⚠️ ${timeOffset}秒での生成失敗:`, timeOffsetError);
+                  // 次のタイムオフセットを試行
+                }
+              }
+
+              // すべてのタイムオフセットで失敗した場合
+              console.warn(`⚠️ すべてのタイムオフセットで失敗、プレースホルダーを生成`);
+
+              // 詳細なエラーログ
+              console.error("動画ファイル詳細:", {
+                name: originalFile.name,
+                type: originalFile.type,
+                size: originalFile.size,
+                lastModified: originalFile.lastModified,
               });
-              console.log(`✅ サムネイル生成完了: ${thumbnailBlob.size} bytes`);
-            } catch (thumbnailError) {
-              console.warn(`⚠️ 動画サムネイル生成失敗、プレースホルダーを生成:`, thumbnailError);
 
-              // 動画読み込みに失敗した場合は即座にプレースホルダー生成
-              thumbnailBlob = await generatePlaceholderThumbnail(videoFile.photoId);
-              console.log(`✅ プレースホルダー生成完了: ${thumbnailBlob.size} bytes`);
-            }
+              // プレースホルダー生成（必ず成功）
+              const placeholderBlob = await generatePlaceholderThumbnail(videoFile.photoId);
+              console.log(`✅ プレースホルダー生成完了: ${placeholderBlob.size} bytes`);
+              return placeholderBlob;
+            };
+
+            // ⭐ サムネイル生成実行（必ずBlobが返される）
+            const thumbnailBlob = await generateThumbnailWithFallback();
+
+            console.log(`🎉 最終サムネイル準備完了: ${thumbnailBlob.size} bytes`);
 
             // 📤 S3にアップロード
             const uploadResult = await uploadThumbnailToS3(thumbnailBlob, videoFile.photoId, API_BASE, token);
@@ -444,56 +444,37 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
               const updateResult = await updateResponse.json();
 
               if (updateResult.success) {
-                console.log(`✅ DynamoDB更新完了: ${videoFile.fileName}`);
+                console.log(`✅ DynamoDB更新完了: ${videoFile.photoId}`);
               } else {
-                console.warn(`⚠️ DynamoDB更新失敗: ${updateResult.message}`);
+                console.error(`❌ DynamoDB更新失敗: ${updateResult.message}`);
               }
-
-              // デバッグ情報をローカルストレージに保存
-              const debugInfo = {
-                photoId: videoFile.photoId,
-                fileName: videoFile.fileName,
-                thumbnailUrl: uploadResult.thumbnailUrl,
-                method: "frontend-html5" as const,
-                generatedAt: new Date().toISOString(),
-                success: true as const,
-              };
-
-              const existingDebug = localStorage.getItem("thumbnailDebug") || "[]";
-              const debugArray = JSON.parse(existingDebug);
-              debugArray.push(debugInfo);
-              localStorage.setItem("thumbnailDebug", JSON.stringify(debugArray));
             } else {
-              console.error(`❌ サムネイルアップロード失敗: ${videoFile.fileName}`, uploadResult.error);
-
-              // エラー情報をローカルストレージに記録
-              const debugInfo = {
-                photoId: videoFile.photoId,
-                fileName: videoFile.fileName,
-                error: uploadResult.error || "Unknown upload error",
-                method: "frontend-html5" as const,
-                generatedAt: new Date().toISOString(),
-                success: false as const,
-              };
-
-              const existingDebug = localStorage.getItem("thumbnailDebug") || "[]";
-              const debugArray = JSON.parse(existingDebug);
-              debugArray.push(debugInfo);
-              localStorage.setItem("thumbnailDebug", JSON.stringify(debugArray));
+              console.error(`❌ サムネイルアップロード失敗: ${uploadResult.error}`);
             }
-          } catch (error) {
-            const errorMessage = getErrorMessage(error);
-            const errorDetails = getErrorDetails(error);
 
-            console.error(`💥 フロントエンドサムネイル生成エラー: ${videoFile.fileName}`, error);
-            console.error(`📊 エラー詳細:`, errorDetails);
-
-            // エラー情報をローカルストレージに記録
+            // デバッグ情報を記録
             const debugInfo = {
               photoId: videoFile.photoId,
               fileName: videoFile.fileName,
-              frontendError: errorMessage,
-              errorDetails: errorDetails,
+              thumbnailSize: thumbnailBlob.size,
+              uploadSuccess: uploadResult.success,
+              method: "frontend-html5" as const,
+              generatedAt: new Date().toISOString(),
+              success: true as const,
+            };
+
+            const existingDebug = localStorage.getItem("thumbnailDebug") || "[]";
+            const debugArray = JSON.parse(existingDebug);
+            debugArray.push(debugInfo);
+            localStorage.setItem("thumbnailDebug", JSON.stringify(debugArray));
+          } catch (error) {
+            console.error(`❌ 動画処理で予期しないエラー: ${videoFile.fileName}`, error);
+
+            // エラー時のデバッグ情報
+            const debugInfo = {
+              photoId: videoFile.photoId,
+              fileName: videoFile.fileName,
+              error: error instanceof Error ? error.message : String(error),
               method: "frontend-html5" as const,
               generatedAt: new Date().toISOString(),
               success: false as const,

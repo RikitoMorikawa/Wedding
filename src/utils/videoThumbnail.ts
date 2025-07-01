@@ -1,21 +1,16 @@
-// src/utils/videoThumbnail.ts
-// フロントエンド側での動画サムネイル生成（改良版）
-
+// src/utils/videoThumbnail.ts - 修正版
 export interface ThumbnailOptions {
   width?: number;
   height?: number;
-  timeOffset?: number; // 何秒の位置からキャプチャするか
-  quality?: number; // 0.0 - 1.0
+  timeOffset?: number;
+  quality?: number;
 }
 
-/**
- * 動画ファイルからサムネイル画像を生成（簡素化版）
- */
 export async function generateVideoThumbnail(videoFile: File, options: ThumbnailOptions = {}): Promise<Blob> {
   const {
     width = 400,
     height = 300,
-    timeOffset = 0, // デフォルトを0秒に変更
+    timeOffset = 0.5, // ⭐ 修正1: 0.5秒に変更（真っ黒を回避）
     quality = 0.8,
   } = options;
 
@@ -33,9 +28,8 @@ export async function generateVideoThumbnail(videoFile: File, options: Thumbnail
     canvas.height = height;
 
     let objectUrl: string | null = null;
-    let hasResolved = false; // 重複処理防止
+    let hasResolved = false;
 
-    // クリーンアップ関数
     const cleanup = () => {
       if (objectUrl) {
         URL.revokeObjectURL(objectUrl);
@@ -45,25 +39,36 @@ export async function generateVideoThumbnail(videoFile: File, options: Thumbnail
       video.removeAttribute("src");
     };
 
-    // 5秒でタイムアウト（短縮）
     const timeoutId = setTimeout(() => {
       if (!hasResolved) {
         hasResolved = true;
         cleanup();
-        reject(new Error("Video thumbnail generation timeout (5s)"));
+        reject(new Error("Video thumbnail generation timeout"));
       }
-    }, 5000);
+    }, 10000); // ⭐ 修正2: タイムアウトを10秒に延長
 
-    // 成功時の処理
     const generateThumbnail = () => {
       if (hasResolved) return;
 
       try {
         console.log(`🎯 サムネイル生成実行: ${video.currentTime}秒, ${video.videoWidth}x${video.videoHeight}`);
 
-        // 動画が有効かチェック
+        // ⭐ 修正3: より厳密な動画状態チェック
+        if (video.readyState < 2) {
+          // HAVE_CURRENT_DATA未満
+          console.warn("動画データが準備されていません");
+          throw new Error("Video not ready for thumbnail generation");
+        }
+
         if (video.videoWidth === 0 || video.videoHeight === 0) {
           throw new Error("Invalid video dimensions");
+        }
+
+        // ⭐ 修正4: 現在時刻のフレームが有効かチェック
+        if (video.currentTime === 0 && timeOffset > 0) {
+          console.warn("シークが完了していません、再試行します");
+          setTimeout(() => generateThumbnail(), 100);
+          return;
         }
 
         // アスペクト比計算
@@ -83,12 +88,37 @@ export async function generateVideoThumbnail(videoFile: File, options: Thumbnail
           offsetX = (width - drawWidth) / 2;
         }
 
-        // 背景とフレーム描画
-        ctx.fillStyle = "#000000";
+        // ⭐ 修正5: 白い背景を描画（真っ黒を防ぐ）
+        ctx.fillStyle = "#FFFFFF";
         ctx.fillRect(0, 0, width, height);
+
+        // 動画フレームを描画
         ctx.drawImage(video, offsetX, offsetY, drawWidth, drawHeight);
 
-        // Blob生成
+        // ⭐ 修正6: 描画結果をピクセルレベルでチェック
+        const imageData = ctx.getImageData(0, 0, width, height);
+        const pixels = imageData.data;
+        let nonBlackPixels = 0;
+
+        for (let i = 0; i < pixels.length; i += 4) {
+          const r = pixels[i];
+          const g = pixels[i + 1];
+          const b = pixels[i + 2];
+          if (r > 10 || g > 10 || b > 10) {
+            // 完全な黒以外
+            nonBlackPixels++;
+          }
+        }
+
+        console.log(`🔍 非黒ピクセル数: ${nonBlackPixels} / ${width * height}`);
+
+        // 真っ黒すぎる場合は別のタイムスタンプを試す
+        if (nonBlackPixels < width * height * 0.1 && timeOffset < 2) {
+          console.warn("フレームが真っ黒すぎます、別のタイムスタンプを試行");
+          video.currentTime = Math.min(timeOffset + 1, video.duration || 2);
+          return;
+        }
+
         canvas.toBlob(
           (blob) => {
             if (!hasResolved) {
@@ -117,15 +147,25 @@ export async function generateVideoThumbnail(videoFile: File, options: Thumbnail
       }
     };
 
-    // イベントハンドラー設定
-    video.onloadeddata = () => {
-      console.log(`📊 動画データ読み込み完了`);
-      if (timeOffset === 0) {
+    // ⭐ 修正7: イベントハンドラーの改善
+    video.onloadedmetadata = () => {
+      console.log(`📊 動画メタデータ読み込み完了: ${video.duration}秒`);
+
+      // 動画の長さに応じてタイムオフセットを調整
+      const adjustedTimeOffset = Math.min(timeOffset, video.duration * 0.1);
+
+      if (adjustedTimeOffset > 0) {
+        video.currentTime = adjustedTimeOffset;
+      } else {
         // 最初のフレームを使用
         generateThumbnail();
-      } else {
-        // 指定時間にシーク
-        video.currentTime = Math.min(timeOffset, video.duration || 1);
+      }
+    };
+
+    video.oncanplay = () => {
+      console.log(`🎬 動画再生準備完了`);
+      if (timeOffset === 0) {
+        generateThumbnail();
       }
     };
 
@@ -186,6 +226,8 @@ export async function generateVideoThumbnail(videoFile: File, options: Thumbnail
     }
   });
 }
+
+
 
 /**
  * プレースホルダーサムネイル生成（最終フォールバック）
