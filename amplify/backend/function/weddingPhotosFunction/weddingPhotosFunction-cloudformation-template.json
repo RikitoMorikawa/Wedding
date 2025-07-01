@@ -95,13 +95,9 @@
             {
               "Effect": "Allow",
               "Principal": {
-                "Service": [
-                  "mediaconvert.amazonaws.com"
-                ]
+                "Service": ["mediaconvert.amazonaws.com"]
               },
-              "Action": [
-                "sts:AssumeRole"
-              ]
+              "Action": ["sts:AssumeRole"]
             }
           ]
         },
@@ -113,11 +109,7 @@
               "Statement": [
                 {
                   "Effect": "Allow",
-                  "Action": [
-                    "s3:GetObject",
-                    "s3:PutObject",
-                    "s3:DeleteObject"
-                  ],
+                  "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
                   "Resource": [
                     {
                       "Fn::Join": [
@@ -215,18 +207,12 @@
               "Ref": "storageFavoritesStreamArn"
             },
             "MEDIACONVERT_ROLE_ARN": {
-              "Fn::GetAtt": [
-                "MediaConvertRole",
-                "Arn"
-              ]
+              "Fn::GetAtt": ["MediaConvertRole", "Arn"]
             }
           }
         },
         "Role": {
-          "Fn::GetAtt": [
-            "LambdaExecutionRole",
-            "Arn"
-          ]
+          "Fn::GetAtt": ["LambdaExecutionRole", "Arn"]
         },
         "Runtime": "nodejs18.x",
         "Layers": [],
@@ -260,22 +246,16 @@
             {
               "Effect": "Allow",
               "Principal": {
-                "Service": [
-                  "lambda.amazonaws.com"
-                ]
+                "Service": ["lambda.amazonaws.com"]
               },
-              "Action": [
-                "sts:AssumeRole"
-              ]
+              "Action": ["sts:AssumeRole"]
             }
           ]
         }
       }
     },
     "lambdaexecutionpolicy": {
-      "DependsOn": [
-        "LambdaExecutionRole"
-      ],
+      "DependsOn": ["LambdaExecutionRole"],
       "Type": "AWS::IAM::Policy",
       "Properties": {
         "PolicyName": "lambda-execution-policy",
@@ -289,11 +269,7 @@
           "Statement": [
             {
               "Effect": "Allow",
-              "Action": [
-                "logs:CreateLogGroup",
-                "logs:CreateLogStream",
-                "logs:PutLogEvents"
-              ],
+              "Action": ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
               "Resource": {
                 "Fn::Sub": [
                   "arn:aws:logs:${region}:${account}:log-group:/aws/lambda/${lambda}:log-stream:*",
@@ -316,9 +292,7 @@
       }
     },
     "AmplifyResourcesPolicy": {
-      "DependsOn": [
-        "LambdaExecutionRole"
-      ],
+      "DependsOn": ["LambdaExecutionRole"],
       "Type": "AWS::IAM::Policy",
       "Properties": {
         "PolicyName": "amplify-lambda-execution-policy",
@@ -349,11 +323,7 @@
             },
             {
               "Effect": "Allow",
-              "Action": [
-                "s3:PutObject",
-                "s3:GetObject",
-                "s3:DeleteObject"
-              ],
+              "Action": ["s3:PutObject", "s3:GetObject", "s3:DeleteObject"],
               "Resource": [
                 {
                   "Fn::Join": [
@@ -482,24 +452,14 @@
             },
             {
               "Effect": "Allow",
-              "Action": [
-                "mediaconvert:CreateJob",
-                "mediaconvert:GetJob",
-                "mediaconvert:ListJobs",
-                "mediaconvert:DescribeEndpoints"
-              ],
+              "Action": ["mediaconvert:CreateJob", "mediaconvert:GetJob", "mediaconvert:ListJobs", "mediaconvert:DescribeEndpoints"],
               "Resource": "*"
             },
             {
               "Effect": "Allow",
-              "Action": [
-                "iam:PassRole"
-              ],
+              "Action": ["iam:PassRole"],
               "Resource": {
-                "Fn::GetAtt": [
-                  "MediaConvertRole",
-                  "Arn"
-                ]
+                "Fn::GetAtt": ["MediaConvertRole", "Arn"]
               }
             }
           ]
@@ -515,10 +475,7 @@
     },
     "Arn": {
       "Value": {
-        "Fn::GetAtt": [
-          "LambdaFunction",
-          "Arn"
-        ]
+        "Fn::GetAtt": ["LambdaFunction", "Arn"]
       }
     },
     "Region": {
@@ -533,18 +490,12 @@
     },
     "LambdaExecutionRoleArn": {
       "Value": {
-        "Fn::GetAtt": [
-          "LambdaExecutionRole",
-          "Arn"
-        ]
+        "Fn::GetAtt": ["LambdaExecutionRole", "Arn"]
       }
     },
     "MediaConvertRoleArn": {
       "Value": {
-        "Fn::GetAtt": [
-          "MediaConvertRole",
-          "Arn"
-        ]
+        "Fn::GetAtt": ["MediaConvertRole", "Arn"]
       }
     }
   }
