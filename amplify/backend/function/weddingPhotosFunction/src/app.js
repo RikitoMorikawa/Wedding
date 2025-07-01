@@ -5,9 +5,9 @@ const { TransactWriteCommand } = require("@aws-sdk/lib-dynamodb");
 const { MediaConvertClient, CreateJobCommand, DescribeEndpointsCommand, GetJobCommand } = require("@aws-sdk/client-mediaconvert");
 
 // ✅ 追加：ファイルシステムとchild_process
-const fs = require('fs');
-const { exec } = require('child_process');
-const { promisify } = require('util');
+const fs = require("fs");
+const { exec } = require("child_process");
+const { promisify } = require("util");
 const execPromise = promisify(exec);
 
 // ✅ 必要なimport（S3とDynamoDB両方）
@@ -1379,6 +1379,170 @@ function generateRecommendations(results) {
 
   return recommendations;
 }
+
+// amplify/backend/function/weddingPhotosFunction/src/app.js
+// 以下のエンドポイントを追加
+
+// ✅ サムネイル用署名付きURL生成（軽量）
+app.post("/photos/thumbnail-upload-url", async function (req, res) {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "*");
+
+  try {
+    const { photoId, fileName, contentType } = req.body;
+
+    if (!photoId || !fileName) {
+      return res.status(400).json({
+        success: false,
+        message: "photoId and fileName are required",
+      });
+    }
+
+    console.log(`📤 サムネイル署名付きURL生成: ${photoId} - ${fileName}`);
+
+    // S3キー生成
+    const s3Key = `thumbnails/${fileName}`;
+
+    // バケット名取得
+    let bucketName = process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME;
+    if (!bucketName) {
+      bucketName = "wedding3171c17ab5234e0fbf03519b4e2eab93e48b3-dev";
+    }
+
+    // 署名付きURL生成
+    const s3Params = {
+      Bucket: bucketName,
+      Key: `public/${s3Key}`,
+      ContentType: contentType || "image/jpeg",
+      Expires: 300, // 5分
+    };
+
+    const uploadURL = s3.getSignedUrl("putObject", s3Params);
+    const thumbnailUrl = `https://${bucketName}.s3.ap-northeast-1.amazonaws.com/public/${s3Key}`;
+
+    console.log(`✅ 署名付きURL生成完了: ${s3Key}`);
+
+    res.json({
+      success: true,
+      uploadURL: uploadURL,
+      thumbnailUrl: thumbnailUrl,
+      s3Key: s3Key,
+      expiresIn: 300,
+    });
+  } catch (error) {
+    console.error("Error generating thumbnail upload URL:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// ✅ DynamoDB サムネイルURL更新（軽量）
+app.post("/photos/update-thumbnail", async function (req, res) {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "*");
+
+  try {
+    const { photoId, thumbnailUrl, uploadedAt } = req.body;
+
+    if (!photoId || !thumbnailUrl) {
+      return res.status(400).json({
+        success: false,
+        message: "photoId and thumbnailUrl are required",
+      });
+    }
+
+    console.log(`💾 DynamoDB サムネイルURL更新: ${photoId}`);
+
+    // テーブル名取得
+    let tableName = process.env.STORAGE_WEDDINGPHOTOS_NAME || process.env.STORAGE_PHOTOS_NAME;
+    if (!tableName) {
+      tableName = "Photos-dev";
+    }
+
+    // レコード取得（複合キー対応）
+    let videoRecord = null;
+
+    // Method 1: uploadedAtがある場合はGetCommand
+    if (uploadedAt) {
+      try {
+        const getCommand = new GetCommand({
+          TableName: tableName,
+          Key: {
+            photoId: photoId,
+            uploadedAt: uploadedAt,
+          },
+        });
+
+        const getResult = await docClient.send(getCommand);
+        if (getResult.Item) {
+          videoRecord = getResult.Item;
+          console.log("✅ GetCommandで動画レコード取得成功");
+        }
+      } catch (getError) {
+        console.log("⚠️ GetCommandエラー、Scanにフォールバック");
+      }
+    }
+
+    // Method 2: GetCommandで見つからない場合はScan
+    if (!videoRecord) {
+      const scanCommand = new ScanCommand({
+        TableName: tableName,
+        FilterExpression: "photoId = :photoId",
+        ExpressionAttributeValues: {
+          ":photoId": photoId,
+        },
+        Limit: 1,
+      });
+
+      const scanResult = await docClient.send(scanCommand);
+      if (scanResult.Items && scanResult.Items.length > 0) {
+        videoRecord = scanResult.Items[0];
+        console.log("✅ Scanで動画レコード取得成功");
+      }
+    }
+
+    if (!videoRecord) {
+      return res.status(404).json({
+        success: false,
+        message: "Video record not found",
+      });
+    }
+
+    // DynamoDB更新
+    const updateCommand = new UpdateCommand({
+      TableName: tableName,
+      Key: {
+        photoId: photoId,
+        uploadedAt: videoRecord.uploadedAt,
+      },
+      UpdateExpression: "SET thumbnailUrl = :thumbnailUrl, thumbnailGeneratedAt = :generatedAt, processingStatus = :status",
+      ExpressionAttributeValues: {
+        ":thumbnailUrl": thumbnailUrl,
+        ":generatedAt": new Date().toISOString(),
+        ":status": "ready",
+      },
+    });
+
+    await docClient.send(updateCommand);
+
+    console.log(`✅ DynamoDB更新完了: ${photoId}`);
+
+    res.json({
+      success: true,
+      message: "Thumbnail URL updated successfully",
+      photoId: photoId,
+      thumbnailUrl: thumbnailUrl,
+    });
+  } catch (error) {
+    console.error("Error updating thumbnail URL:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
 
 // ✅ S3ファイル削除用ヘルパーAPI（緊急時用）
 app.delete("/photos/cleanup-s3/:s3Key", async function (req, res) {

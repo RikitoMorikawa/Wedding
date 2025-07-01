@@ -9,18 +9,24 @@ import awsconfig from "../aws-exports";
 import WeddingConfirmDialog from "./WeddingConfirmDialog";
 import BubblyButton from "./BubblyButton";
 import { useLanguage } from "@/contexts/LanguageContext";
-import { generateVideoThumbnail, uploadThumbnailToS3 } from "@/utils/videoThumbnail";
+import { generatePlaceholderThumbnail, generateVideoThumbnail, uploadThumbnailToS3 } from "@/utils/videoThumbnail";
 
 // 型定義を追加
-interface SuccessfulUploadResult {
+
+// 型定義を追加（より柔軟に）
+interface BaseUploadResult {
+  success: boolean;
+  fileName: string;
+  fileIndex: number;
+}
+
+interface SuccessfulUploadResult extends BaseUploadResult {
   success: true;
   photoId: string;
   s3Key: string;
   mediaType: string;
   fileType: string;
-  fileName: string;
   size: number;
-  fileIndex: number;
 }
 
 Amplify.configure(awsconfig);
@@ -329,11 +335,16 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
         };
       };
 
+
       // 型ガード関数
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       function isSuccessfulUpload(result: any): result is SuccessfulUploadResult {
-        return result.success === true && typeof result.photoId === "string" && typeof result.fileName === "string";
+        return (
+          result && result.success === true && typeof result.photoId === "string" && typeof result.fileName === "string" && typeof result.s3Key === "string"
+        );
       }
+
+      // performBatchUpload関数内のサムネイル生成部分を軽量化
 
       if (videoFiles.length > 0) {
         console.log(`🎬 ${videoFiles.length}個の動画のサムネイル生成を開始...`);
@@ -344,6 +355,21 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
             // 型ガード: 成功したアップロードファイルかチェック
             if (!isSuccessfulUpload(videoFile)) {
               console.error(`❌ 無効な動画ファイル:`, videoFile);
+
+              // 失敗したアップロードのデバッグ情報も記録
+              const debugInfo = {
+                fileName: videoFile.fileName || "unknown",
+                error: "Upload failed or invalid result",
+                method: "frontend-html5" as const,
+                generatedAt: new Date().toISOString(),
+                success: false as const,
+              };
+
+              const existingDebug = localStorage.getItem("thumbnailDebug") || "[]";
+              const debugArray = JSON.parse(existingDebug);
+              debugArray.push(debugInfo);
+              localStorage.setItem("thumbnailDebug", JSON.stringify(debugArray));
+
               continue;
             }
 
@@ -354,18 +380,45 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
 
             if (!originalFile) {
               console.error(`❌ 元ファイルが見つかりません: ${videoFile.fileName}`);
+
+              // デバッグ情報を記録
+              const debugInfo = {
+                photoId: videoFile.photoId,
+                fileName: videoFile.fileName,
+                error: "Original file not found in selectedFiles",
+                method: "frontend-html5" as const,
+                generatedAt: new Date().toISOString(),
+                success: false as const,
+              };
+
+              const existingDebug = localStorage.getItem("thumbnailDebug") || "[]";
+              const debugArray = JSON.parse(existingDebug);
+              debugArray.push(debugInfo);
+              localStorage.setItem("thumbnailDebug", JSON.stringify(debugArray));
+
               continue;
             }
 
             // HTML5 Videoを使用してサムネイル生成（1-2秒で完了）
-            const thumbnailBlob = await generateVideoThumbnail(originalFile, {
-              width: 400,
-              height: 300,
-              timeOffset: 1, // 1秒の位置からキャプチャ
-              quality: 0.8,
-            });
+            let thumbnailBlob: Blob;
 
-            console.log(`✅ サムネイル生成完了: ${thumbnailBlob.size} bytes`);
+            try {
+              console.log(`🎬 動画サムネイル生成試行: ${originalFile.name}, ${originalFile.type}, ${originalFile.size} bytes`);
+
+              thumbnailBlob = await generateVideoThumbnail(originalFile, {
+                width: 400,
+                height: 300,
+                timeOffset: 0, // 最初のフレーム（より安全）
+                quality: 0.8,
+              });
+              console.log(`✅ サムネイル生成完了: ${thumbnailBlob.size} bytes`);
+            } catch (thumbnailError) {
+              console.warn(`⚠️ 動画サムネイル生成失敗、プレースホルダーを生成:`, thumbnailError);
+
+              // 動画読み込みに失敗した場合は即座にプレースホルダー生成
+              thumbnailBlob = await generatePlaceholderThumbnail(videoFile.photoId);
+              console.log(`✅ プレースホルダー生成完了: ${thumbnailBlob.size} bytes`);
+            }
 
             // 📤 S3にアップロード
             const uploadResult = await uploadThumbnailToS3(thumbnailBlob, videoFile.photoId, API_BASE, token);
