@@ -219,21 +219,25 @@ const AlbumItem = memo(({ album, onClick, isOwner }: { album: Album; onClick: ()
   const [ref, isVisible] = useLazyLoading(0.1);
   const { t } = useLanguage();
 
-  // ❌ 削除: この行を削除
-  // const { thumbnailUrl, loading } = useVideoThumbnail(album.mainPhoto?.mediaType === "video" && album.mainPhotoUrl && isVisible ? album.mainPhotoUrl : "", 0.1);
-
-  // ✅ 追加: シンプルな条件分岐のみ
+  // ✅ 修正: 表示画像の決定ロジック
   const displayImage = useMemo(() => {
     if (!isVisible) return null;
 
-    // 動画の場合：サムネイルURL使用（なければnull）
+    // 動画の場合
     if (album.mainPhoto?.mediaType === "video") {
-      return album.mainPhoto?.thumbnailUrl || null;
+      // 1. thumbnailUrlを優先
+      if (album.mainPhoto?.thumbnailUrl) {
+        console.log(`🖼️ 動画サムネイル表示: ${album.albumId}`);
+        return album.mainPhoto.thumbnailUrl;
+      }
+      // 2. サムネイルがない場合はnull（プレースホルダー表示）
+      console.log(`📹 サムネイルなし、プレースホルダー表示: ${album.albumId}`);
+      return null;
     }
 
-    // 写真の場合：通常のURL
+    // 写真の場合
     return album.mainPhotoUrl;
-  }, [album.mainPhoto?.mediaType, album.mainPhoto?.thumbnailUrl, album.mainPhotoUrl, isVisible]);
+  }, [album.mainPhoto?.mediaType, album.mainPhoto?.thumbnailUrl, album.mainPhotoUrl, isVisible, album.albumId]);
 
   const isVideoProcessing = album.mainPhoto?.mediaType === "video" && album.mainPhoto?.processingStatus === "processing";
 
@@ -245,10 +249,21 @@ const AlbumItem = memo(({ album, onClick, isOwner }: { album: Album; onClick: ()
     >
       {isVisible ? (
         displayImage ? (
-          // ✅ 通常の画像表示（写真 or 生成済みサムネイル）
-          <img src={displayImage} alt={album.caption || "Wedding album"} className="w-full h-full object-cover" loading="lazy" decoding="async" />
+          // ✅ 画像表示（写真 or 動画サムネイル）
+          <img
+            src={displayImage}
+            alt={album.caption || "Wedding album"}
+            className="w-full h-full object-cover"
+            loading="lazy"
+            decoding="async"
+            onError={(e) => {
+              console.error(`画像読み込みエラー: ${displayImage}`);
+              // エラー時はプレースホルダーを表示
+              e.currentTarget.style.display = "none";
+            }}
+          />
         ) : album.mainPhoto?.mediaType === "video" ? (
-          // ✅ 動画の場合：プレースホルダー表示
+          // ✅ 動画プレースホルダー
           <VideoPlaceholder album={album} loading={isVideoProcessing} />
         ) : (
           // その他のエラー表示
@@ -475,6 +490,9 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
   // =============================================================================
 
   // ===== 修正3: loadAlbums関数でサムネイルURL生成を追加 =====
+  // src/components/PhotoGallery.tsx
+  // fetchAlbums関数のサムネイル処理を修正
+
   const fetchAlbums = useCallback(async () => {
     try {
       setLoading(true);
@@ -493,97 +511,107 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
           try {
             const urlResult = await getUrl({ key: album.mainPhoto.s3Key });
 
-            // ✅ 追加: サムネイルのURL生成
+            // ✅ 修正: サムネイルもAmplify署名付きURLで生成
             let thumbnailUrl = null;
-            if (album.mainPhoto?.thumbnailS3Key && album.mainPhoto?.processingStatus === "ready") {
+            if (album.mainPhoto?.mediaType === "video") {
+              // DynamoDBのthumbnailUrlは無視し、S3キーから署名付きURL生成
+              const thumbnailS3Key = `thumbnails/${album.mainPhoto.photoId}-thumbnail.jpg`;
+
               try {
-                thumbnailUrl = (await getUrl({ key: album.mainPhoto.thumbnailS3Key })).url.toString();
-              } catch (error) {
-                console.warn(`Thumbnail URL generation failed for ${album.mainPhoto.thumbnailS3Key}`, error);
+                // まず新しい形式（-thumbnail.jpg）を試行
+                const thumbResult = await getUrl({ key: thumbnailS3Key });
+                thumbnailUrl = thumbResult.url.toString();
+                console.log(`🖼️ 新形式サムネイル使用: ${album.albumId} -> ${thumbnailS3Key}`);
+              } catch {
+                console.log(`⚠️ 新形式サムネイルなし: ${thumbnailS3Key}`);
+
+                // フォールバック: 古い形式（_thumbnail.svg）を試行
+                try {
+                  const oldThumbnailKey = `thumbnails/${album.mainPhoto.photoId}_thumbnail.svg`;
+                  const oldThumbResult = await getUrl({ key: oldThumbnailKey });
+                  thumbnailUrl = oldThumbResult.url.toString();
+                  console.log(`🔄 旧形式サムネイル使用: ${album.albumId} -> ${oldThumbnailKey}`);
+                } catch {
+                  console.log(`❌ サムネイルなし: ${album.albumId}`);
+                  thumbnailUrl = null;
+                }
               }
             }
 
             return {
               ...album,
               mainPhotoUrl: urlResult.url.toString(),
-              mainPhoto: album.mainPhoto
-                ? {
-                    ...album.mainPhoto,
-                    thumbnailUrl, // ← サムネイルURLを追加
-                  }
-                : null,
-              favoriteCount: 0, // 初期値
-              isFavorite: false, // 初期値
-              isPublic: album.isPublic !== false,
+              mainPhoto: {
+                ...album.mainPhoto,
+                url: urlResult.url.toString(),
+                thumbnailUrl: thumbnailUrl, // ✅ Amplify署名付きURLを使用
+              },
             };
           } catch (error) {
-            console.error(`Error getting main photo URL for album ${album.albumId}:`, error);
-            return null;
+            console.error(`URL生成エラー - Album: ${album.albumId}`, error);
+            return {
+              ...album,
+              mainPhotoUrl: "",
+              mainPhoto: {
+                ...album.mainPhoto,
+                url: "",
+                thumbnailUrl: null,
+              },
+            };
           }
         })
       );
 
-      const validAlbums = albumsWithUrls.filter((album) => album !== null);
-      const sortedAlbums = sortAlbums(validAlbums, sortType);
+      // Step 2以降は既存のまま...
+      let albumsWithFavorites = albumsWithUrls;
 
-      setAlbums(sortedAlbums);
-      setLoading(false);
-
-      console.log(`✅ ${sortedAlbums.length}個のアルバムを表示`);
-
-      // Step 2: バッチAPIでお気に入り情報を取得
-      if (sortedAlbums.length > 0 && userInfo?.passcode) {
-
+      if (userInfo?.passcode) {
         try {
-          const albumIds = sortedAlbums.map((album) => album.albumId);
+          const albumIds = albumsWithUrls.map((album) => album.albumId);
 
-          const batchResponse = await fetch(`${API_BASE}/favorites/batch`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              userId: userInfo.passcode,
-              albumIds: albumIds,
-            }),
-          });
+          if (albumIds.length > 0) {
+            const favResponse = await fetch(`${API_BASE}/favorites/batch`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                userId: userInfo.passcode,
+                albumIds: albumIds,
+              }),
+            });
 
-          if (batchResponse.ok) {
-            const batchResult = await batchResponse.json();
+            if (favResponse.ok) {
+              const favResult = await favResponse.json();
 
-            if (batchResult.success) {
-              // 📊 取得した情報をログ出力
-
-              let favoriteCount = 0;
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              Object.values(batchResult.results).forEach((result: any) => {
-                if (result.isFavorite) favoriteCount++;
-              });
-
-              console.log(`⭐ ${favoriteCount}個のお気に入りを検出`);
-
-              // 一括でお気に入り情報を更新
-              setAlbums((prevAlbums) =>
-                prevAlbums.map((album) => ({
+              if (favResult.success) {
+                albumsWithFavorites = albumsWithUrls.map((album) => ({
                   ...album,
-                  favoriteCount: batchResult.results[album.albumId]?.favoriteCount || 0,
-                  isFavorite: batchResult.results[album.albumId]?.isFavorite || false,
-                }))
-              );
+                  favoriteCount: favResult.results[album.albumId]?.favoriteCount || 0,
+                  isFavorite: favResult.results[album.albumId]?.isFavorite || false,
+                }));
 
-            } else {
-              console.warn("⚠️ バッチお気に入り取得でエラー:", batchResult.message);
+                console.log(`✅ お気に入り情報取得完了: ${Object.keys(favResult.results).length}件`);
+              }
             }
-          } else {
-            console.warn("⚠️ バッチお気に入りAPI呼び出しでエラー:", batchResponse.status);
           }
         } catch (error) {
-          console.error("❌ バッチお気に入り取得でエラー:", error);
+          console.error("お気に入り情報取得エラー:", error);
         }
       }
+
+      setAlbums(albumsWithFavorites);
+      console.log(`✅ ${albumsWithFavorites.length}個のアルバムを表示`);
+
+      // デバッグ: 動画サムネイルの状況をログ出力
+      const videoAlbums = albumsWithFavorites.filter((album) => album.mainPhoto?.mediaType === "video");
+      const videoWithThumbnails = videoAlbums.filter((album) => album.mainPhoto?.thumbnailUrl);
+      console.log(`📹 動画アルバム: ${videoAlbums.length}件、サムネイルあり: ${videoWithThumbnails.length}件`);
     } catch (error) {
-      console.error("❌ アルバム読み込みエラー:", error);
+      console.error("アルバム取得エラー:", error);
+      setAlbums([]);
+    } finally {
       setLoading(false);
     }
-  }, [API_BASE, sortAlbums, userInfo?.passcode]);
+  }, [userInfo?.passcode]);
 
   // アルバム写真を読み込み（メモ化）
   // ===============================================
