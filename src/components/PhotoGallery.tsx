@@ -21,6 +21,9 @@ interface Photo {
   url?: string;
   mediaType?: "photo" | "video";
   fileType?: string;
+  thumbnailS3Key?: string; // ← 既存：サムネイル画像のS3キー
+  thumbnailUrl?: string; // ← 新規追加：サムネイル画像のURL（フロントエンド用）
+  processingStatus: "pending" | "processing" | "ready" | "failed"; // ← 既存
 }
 
 interface Album {
@@ -125,108 +128,38 @@ const useImagePreloader = (imageUrls: string[], priority: number = 5) => {
   return loadedImages;
 };
 
-// ===== 動画サムネイル生成フック（最適化版） =====
-// ===== 動画サムネイル生成フック（改善版） =====
-const useVideoThumbnail = (videoUrl: string, timeStamp: number = 0.1) => {
-  const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const cache = useRef<Map<string, string>>(new Map());
+// ✅ 新規追加: 静的プレースホルダーコンポーネント
+const VideoPlaceholder = memo(({ album, loading = false }: { album: Album; loading?: boolean }) => {
+  const { t } = useLanguage();
 
-  const generateThumbnail = useCallback(async () => {
-    if (!videoUrl || videoUrl.trim() === "" || thumbnailUrl) return;
+  return (
+    <div className="w-full h-full bg-gradient-to-br from-purple-600 to-indigo-700 flex items-center justify-center relative">
+      {loading ? (
+        <div className="text-center">
+          <div className="w-8 h-8 border-2 border-white/30 border-t-white rounded-full animate-spin mx-auto mb-3"></div>
+          <p className="text-white/90 text-sm font-medium">{t("processing")}</p>
+        </div>
+      ) : (
+        <div className="text-center">
+          <div className="w-16 h-16 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center mx-auto mb-3">
+            <svg className="w-8 h-8 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M8 5v14l11-7z" />
+            </svg>
+          </div>
+          <p className="text-white/90 text-sm font-medium">{t("video")}</p>
+          <p className="text-white/60 text-xs mt-1">{album.uploaderName || "Video"}</p>
+        </div>
+      )}
 
-    // キャッシュチェック
-    const cached = cache.current.get(videoUrl);
-    if (cached) {
-      setThumbnailUrl(cached);
-      return;
-    }
+      {/* 識別用のユニークな要素 */}
+      <div className="absolute bottom-2 left-2 bg-black/40 rounded px-2 py-1">
+        <span className="text-white text-xs font-mono">{album.albumId?.substring(0, 6) || "VIDEO"}</span>
+      </div>
+    </div>
+  );
+});
 
-    setLoading(true);
-    try {
-      const video = document.createElement("video");
-      video.crossOrigin = "anonymous";
-      video.muted = true;
-      video.playsInline = true;
-      video.preload = "metadata";
-
-      const dataURL = await new Promise<string>((resolve, reject) => {
-        const timeoutId = setTimeout(() => {
-          console.warn("Video thumbnail generation timeout for:", videoUrl.substring(0, 50) + "...");
-          reject(new Error("Timeout"));
-        }, 10000);
-
-        video.onloadedmetadata = () => {
-          video.currentTime = timeStamp;
-        };
-
-        video.onseeked = () => {
-          try {
-            clearTimeout(timeoutId);
-            const canvas = document.createElement("canvas");
-            const ctx = canvas.getContext("2d");
-
-            if (ctx) {
-              // サイズ最適化
-              const maxSize = 300;
-              const ratio = Math.min(maxSize / video.videoWidth, maxSize / video.videoHeight);
-
-              canvas.width = video.videoWidth * ratio;
-              canvas.height = video.videoHeight * ratio;
-
-              ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-              const result = canvas.toDataURL("image/jpeg", 0.7);
-              resolve(result);
-            } else {
-              console.warn("Canvas context not available for video:", videoUrl.substring(0, 50) + "...");
-              reject(new Error("Canvas context not available"));
-            }
-          } catch (error) {
-            clearTimeout(timeoutId);
-            console.warn("Error during video thumbnail generation:", error);
-            reject(error);
-          }
-        };
-
-        video.onerror = (event) => {
-          clearTimeout(timeoutId);
-          // より詳細なエラー情報をログ出力（但しコンソールエラーは抑制）
-          console.warn("Video load failed (likely CORS or network issue):", {
-            url: videoUrl.substring(0, 50) + "...",
-            event: event
-          });
-          // エラーをrejectせずに、単純にnullを返すことでサムネイル生成をスキップ
-          resolve(""); // 空文字列を返してエラーを回避
-        };
-
-        video.src = videoUrl;
-      });
-
-      if (dataURL && dataURL.length > 0) {
-        cache.current.set(videoUrl, dataURL);
-        setThumbnailUrl(dataURL);
-      } else {
-        // サムネイル生成に失敗した場合はnullのまま
-        setThumbnailUrl(null);
-      }
-    } catch (error) {
-      // ログレベルをwarnに変更してエラーの深刻度を下げる
-      console.warn("Failed to generate video thumbnail:", {
-        url: videoUrl.substring(0, 50) + "...",
-        error: error instanceof Error ? error.message : "Unknown error"
-      });
-      setThumbnailUrl(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [videoUrl, timeStamp, thumbnailUrl]);
-
-  useEffect(() => {
-    generateThumbnail();
-  }, [generateThumbnail]);
-
-  return { thumbnailUrl, loading };
-};
+VideoPlaceholder.displayName = "VideoPlaceholder";
 
 // ===== ローディング状態コンポーネント =====
 const LoadingState = memo(() => {
@@ -281,19 +214,28 @@ const EmptyState = memo(({ mediaFilter, isAlbumsEmpty = false }: { mediaFilter: 
 EmptyState.displayName = "EmptyState";
 
 // ===== 最適化されたアルバムアイテム =====
+// ===== 修正1: AlbumItemコンポーネント =====
 const AlbumItem = memo(({ album, onClick, isOwner }: { album: Album; onClick: () => void; isOwner: (album: Album) => boolean }) => {
   const [ref, isVisible] = useLazyLoading(0.1);
   const { t } = useLanguage();
 
-  const { thumbnailUrl, loading } = useVideoThumbnail(album.mainPhoto?.mediaType === "video" && album.mainPhotoUrl && isVisible ? album.mainPhotoUrl : "", 0.1);
+  // ❌ 削除: この行を削除
+  // const { thumbnailUrl, loading } = useVideoThumbnail(album.mainPhoto?.mediaType === "video" && album.mainPhotoUrl && isVisible ? album.mainPhotoUrl : "", 0.1);
 
+  // ✅ 追加: シンプルな条件分岐のみ
   const displayImage = useMemo(() => {
     if (!isVisible) return null;
+
+    // 動画の場合：サムネイルURL使用（なければnull）
     if (album.mainPhoto?.mediaType === "video") {
-      return thumbnailUrl;
+      return album.mainPhoto?.thumbnailUrl || null;
     }
+
+    // 写真の場合：通常のURL
     return album.mainPhotoUrl;
-  }, [album.mainPhoto?.mediaType, thumbnailUrl, album.mainPhotoUrl, isVisible]);
+  }, [album.mainPhoto?.mediaType, album.mainPhoto?.thumbnailUrl, album.mainPhotoUrl, isVisible]);
+
+  const isVideoProcessing = album.mainPhoto?.mediaType === "video" && album.mainPhoto?.processingStatus === "processing";
 
   return (
     <div
@@ -303,12 +245,13 @@ const AlbumItem = memo(({ album, onClick, isOwner }: { album: Album; onClick: ()
     >
       {isVisible ? (
         displayImage ? (
+          // ✅ 通常の画像表示（写真 or 生成済みサムネイル）
           <img src={displayImage} alt={album.caption || "Wedding album"} className="w-full h-full object-cover" loading="lazy" decoding="async" />
-        ) : loading ? (
-          <div className="w-full h-full bg-gray-200 flex items-center justify-center">
-            <div className="w-8 h-8 border-2 border-pink-300 border-t-pink-600 rounded-full animate-spin"></div>
-          </div>
+        ) : album.mainPhoto?.mediaType === "video" ? (
+          // ✅ 動画の場合：プレースホルダー表示
+          <VideoPlaceholder album={album} loading={isVideoProcessing} />
         ) : (
+          // その他のエラー表示
           <div className="w-full h-full bg-gray-200 flex items-center justify-center">
             <div className="text-center">
               <div className="w-12 h-12 bg-gray-400 rounded-full flex items-center justify-center mx-auto mb-2">
@@ -316,7 +259,7 @@ const AlbumItem = memo(({ album, onClick, isOwner }: { album: Album; onClick: ()
                   <path d="M8 5v14l11-7z" />
                 </svg>
               </div>
-              <p className="text-xs text-gray-500">{album.mainPhoto?.mediaType === "video" ? t("video") : t("image")}</p>
+              <p className="text-xs text-gray-500">{t("image")}</p>
             </div>
           </div>
         )
@@ -324,13 +267,14 @@ const AlbumItem = memo(({ album, onClick, isOwner }: { album: Album; onClick: ()
         <div className="w-full h-full bg-gray-200 animate-pulse"></div>
       )}
 
-      {/* 動画アイコンオーバーレイ */}
+      {/* 動画識別バッジ */}
       {isVisible && album.mainPhoto?.mediaType === "video" && (
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <div className="w-12 h-12 bg-black/60 backdrop-blur-sm rounded-full flex items-center justify-center">
-            <svg className="w-6 h-6 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
+        <div className="absolute top-2 right-2">
+          <div className="bg-purple-600/90 backdrop-blur-sm rounded-lg px-2 py-1 flex items-center space-x-1">
+            <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 24 24">
               <path d="M8 5v14l11-7z" />
             </svg>
+            <span className="text-white text-xs font-medium">VIDEO</span>
           </div>
         </div>
       )}
@@ -392,17 +336,20 @@ const AlbumItem = memo(({ album, onClick, isOwner }: { album: Album; onClick: ()
 
 AlbumItem.displayName = "AlbumItem";
 
-// ===== 最適化されたサムネイルアイテム =====
+// ===== 修正2: ThumbnailItemコンポーネント =====
 const ThumbnailItem = memo(({ photo, index, isSelected, onClick }: { photo: Photo; index: number; isSelected: boolean; onClick: () => void }) => {
   const { t } = useLanguage();
-  const { thumbnailUrl, loading } = useVideoThumbnail(photo.mediaType === "video" && photo.url ? photo.url : "", 0.1);
 
+  // ❌ 削除: この行を削除
+  // const { thumbnailUrl, loading } = useVideoThumbnail(photo.mediaType === "video" && photo.url ? photo.url : "", 0.1);
+
+  // ✅ 追加: シンプルな条件分岐のみ
   const displayImage = useMemo(() => {
     if (photo.mediaType === "video") {
-      return thumbnailUrl;
+      return photo.thumbnailUrl || null; // サムネイルURLを使用（なければnull）
     }
     return photo.url;
-  }, [photo.mediaType, thumbnailUrl, photo.url]);
+  }, [photo.mediaType, photo.thumbnailUrl, photo.url]);
 
   return (
     <button
@@ -419,11 +366,17 @@ const ThumbnailItem = memo(({ photo, index, isSelected, onClick }: { photo: Phot
           loading="lazy"
           decoding="async"
         />
-      ) : loading ? (
-        <div className="w-full h-full bg-gray-200 flex items-center justify-center rounded-lg">
-          <div className="w-3 h-3 border border-white/30 border-t-white rounded-full animate-spin"></div>
+      ) : photo.mediaType === "video" ? (
+        // ✅ 動画サムネイルなしの場合のプレースホルダー
+        <div className="w-full h-full bg-gradient-to-br from-purple-600 to-indigo-700 flex items-center justify-center">
+          <div className="w-4 h-4 bg-white/20 rounded-full flex items-center justify-center">
+            <svg className="w-2 h-2 text-white ml-0.1" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M8 5v14l11-7z" />
+            </svg>
+          </div>
         </div>
       ) : (
+        // その他のエラー表示
         <div className="w-full h-full bg-gray-200 flex items-center justify-center rounded-lg">
           <div className="w-4 h-4 bg-black/60 rounded-full flex items-center justify-center">
             <svg className="w-2 h-2 text-white ml-0.1" fill="currentColor" viewBox="0 0 24 24">
@@ -433,6 +386,7 @@ const ThumbnailItem = memo(({ photo, index, isSelected, onClick }: { photo: Phot
         </div>
       )}
 
+      {/* 動画バッジ */}
       {photo.mediaType === "video" && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="w-4 h-4 bg-black/60 rounded-full flex items-center justify-center">
@@ -520,7 +474,7 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
   // 🔄 PhotoGallery.tsx - fetchAlbums関数の置き換え版
   // =============================================================================
 
-  // ✅ この関数で既存のfetchAlbums関数を完全に置き換えてください
+  // ===== 修正3: loadAlbums関数でサムネイルURL生成を追加 =====
   const fetchAlbums = useCallback(async () => {
     try {
       setLoading(true);
@@ -538,9 +492,26 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
         result.albums.map(async (album: any) => {
           try {
             const urlResult = await getUrl({ key: album.mainPhoto.s3Key });
+
+            // ✅ 追加: サムネイルのURL生成
+            let thumbnailUrl = null;
+            if (album.mainPhoto?.thumbnailS3Key && album.mainPhoto?.processingStatus === "ready") {
+              try {
+                thumbnailUrl = (await getUrl({ key: album.mainPhoto.thumbnailS3Key })).url.toString();
+              } catch (error) {
+                console.warn(`Thumbnail URL generation failed for ${album.mainPhoto.thumbnailS3Key}`, error);
+              }
+            }
+
             return {
               ...album,
               mainPhotoUrl: urlResult.url.toString(),
+              mainPhoto: album.mainPhoto
+                ? {
+                    ...album.mainPhoto,
+                    thumbnailUrl, // ← サムネイルURLを追加
+                  }
+                : null,
               favoriteCount: 0, // 初期値
               isFavorite: false, // 初期値
               isPublic: album.isPublic !== false,

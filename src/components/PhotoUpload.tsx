@@ -164,6 +164,8 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
   };
 
   // ✅ シンプルなバッチアップロード処理
+  // ✅ 正しい配置: try-catchブロック内、完了処理の前に移動
+
   const performBatchUpload = async () => {
     if (selectedFiles.length === 0 || !userInfo) return;
 
@@ -194,9 +196,9 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
       console.log("🔄 署名付きURLを一括取得中...");
       const urlResponse = await fetch(`${API_BASE}/photos/batch-upload-urls`, {
         method: "POST",
-        headers: { 
+        headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           files: filesInfo,
@@ -262,9 +264,9 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
       console.log("🔄 バッチでメタデータ保存中...");
       const saveResponse = await fetch(`${API_BASE}/photos/batch-save-album`, {
         method: "POST",
-        headers: { 
+        headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           albumId: albumId,
@@ -284,7 +286,55 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
 
       console.log(`✅ アルバム保存完了: ${saveResult.totalFiles}ファイル、${saveResult.batches}バッチ`);
 
-      // 完了処理
+      // ✅ Step 4: 動画のサムネイル生成をトリガー（ここに移動）
+      const videoFiles = successfulUploads.filter((result) => result.mediaType === "video");
+
+      if (videoFiles.length > 0) {
+        console.log(`🎬 ${videoFiles.length}個の動画のサムネイル生成を開始...`);
+
+        // 動画サムネイル生成を並行実行（非同期、エラーでも継続）
+        const thumbnailPromises = videoFiles.map(async (videoFile) => {
+          try {
+            const thumbnailResponse = await fetch(`${API_BASE}/photos/generate-thumbnail`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({
+                photoId: videoFile.photoId,
+                videoS3Key: videoFile.s3Key,
+              }),
+            });
+
+            const thumbnailResult = await thumbnailResponse.json();
+
+            if (thumbnailResult.success) {
+              console.log(`✅ サムネイル生成完了: ${videoFile.fileName}`);
+              return { success: true, photoId: videoFile.photoId };
+            } else {
+              console.warn(`⚠️ サムネイル生成失敗: ${videoFile.fileName}`, thumbnailResult.message);
+              return { success: false, photoId: videoFile.photoId, error: thumbnailResult.message };
+            }
+          } catch (error) {
+            console.error(`❌ サムネイル生成エラー: ${videoFile.fileName}`, error);
+            return { success: false, photoId: videoFile.photoId, error };
+          }
+        });
+
+        // サムネイル生成は非同期実行（アップロード完了をブロックしない）
+        Promise.allSettled(thumbnailPromises).then((thumbnailResults) => {
+          const successfulThumbnails = thumbnailResults.filter((result) => result.status === "fulfilled" && result.value.success).length;
+
+          console.log(`🎨 サムネイル生成結果: ${successfulThumbnails}/${videoFiles.length}個成功`);
+
+          if (successfulThumbnails < videoFiles.length) {
+            console.warn(`⚠️ 一部のサムネイル生成に失敗しましたが、動画はアップロードされました`);
+          }
+        });
+      }
+
+      // 完了処理（サムネイル生成の完了を待たずに実行）
       selectedFiles.forEach((file) => URL.revokeObjectURL(file.preview));
       setSelectedFiles([]);
       setCaption("");

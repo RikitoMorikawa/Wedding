@@ -375,8 +375,10 @@ app.post("/photos/batch-save-album", async function (req, res) {
                 albumId: albumId,
                 uploadedBy: uploadedBy,
                 uploaderName: uploaderName,
-                caption: globalIndex === 0 ? (caption || "") : "", // メイン写真のみキャプション
+                caption: globalIndex === 0 ? caption || "" : "", // メイン写真のみキャプション
                 s3Key: file.s3Key,
+                thumbnailS3Key: file.mediaType === "video" ? `thumbnails/${file.photoId}_thumbnail.jpg` : null,
+                processingStatus: file.mediaType === "video" ? "pending" : "ready",
                 uploadedAt: uploadedAt,
                 photoIndex: globalIndex,
                 totalPhotos: files.length,
@@ -491,7 +493,113 @@ app.post("/photos/batch-save-album", async function (req, res) {
       error: error.message,
     });
   }
+  
 });
+
+// ✅ 既存のバッチURL生成処理の後に、以下を追加
+app.post("/photos/generate-thumbnail", async function (req, res) {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "*");
+
+  try {
+    const { photoId, videoS3Key } = req.body;
+
+    if (!photoId || !videoS3Key) {
+      return res.status(400).json({
+        success: false,
+        message: "photoId and videoS3Key are required"
+      });
+    }
+
+    // 簡易版: Canvas APIを使ったサーバーサイド処理（Node.js用）
+    const thumbnailS3Key = `thumbnails/${photoId}_thumbnail.jpg`;
+    
+    // Step 1: 処理状態を更新
+    await docClient.send(new PutCommand({
+      TableName: process.env.STORAGE_PHOTOS_NAME,
+      Key: { photoId },
+      UpdateExpression: 'SET processingStatus = :status, thumbnailS3Key = :thumbnailKey',
+      ExpressionAttributeValues: { 
+        ':status': 'processing',
+        ':thumbnailKey': thumbnailS3Key
+      }
+    }));
+
+    // Step 2: 簡易的なサムネイル生成（実際の動画処理は省略し、プレースホルダー画像生成）
+    const placeholderImageBuffer = await generatePlaceholderThumbnail(photoId);
+    
+    // Step 3: S3にアップロード
+    await s3.upload({
+      Bucket: process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME,
+      Key: thumbnailS3Key,
+      Body: placeholderImageBuffer,
+      ContentType: 'image/jpeg'
+    }).promise();
+
+    // Step 4: 完了状態に更新
+    await docClient.send(new PutCommand({
+      TableName: process.env.STORAGE_PHOTOS_NAME,
+      Key: { photoId },
+      UpdateExpression: 'SET processingStatus = :status',
+      ExpressionAttributeValues: { ':status': 'ready' }
+    }));
+
+    res.json({
+      success: true,
+      message: "Thumbnail generated successfully",
+      thumbnailS3Key: thumbnailS3Key
+    });
+
+  } catch (error) {
+    console.error("Thumbnail generation error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// ✅ プレースホルダー画像生成関数（簡易版）
+async function generatePlaceholderThumbnail(photoId) {
+  // Canvas APIを使った簡易サムネイル生成
+  const Canvas = require('canvas');
+  const canvas = Canvas.createCanvas(300, 300);
+  const ctx = canvas.getContext('2d');
+
+  // グラデーション背景
+  const gradient = ctx.createLinearGradient(0, 0, 300, 300);
+  gradient.addColorStop(0, '#667eea');
+  gradient.addColorStop(1, '#764ba2');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, 300, 300);
+
+  // 再生ボタン
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+  ctx.beginPath();
+  ctx.arc(150, 150, 40, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 三角形（再生アイコン）
+  ctx.fillStyle = '#667eea';
+  ctx.beginPath();
+  ctx.moveTo(135, 135);
+  ctx.lineTo(135, 165);
+  ctx.lineTo(165, 150);
+  ctx.closePath();
+  ctx.fill();
+
+  // テキスト
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+  ctx.font = '16px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText('VIDEO', 150, 200);
+  
+  // ID表示（識別用）
+  ctx.font = '12px Arial';
+  ctx.fillText(photoId.substring(0, 8), 150, 220);
+
+  return canvas.toBuffer('image/jpeg', { quality: 0.8 });
+}
 
 // ✅ S3ファイル削除用ヘルパーAPI（緊急時用）
 app.delete("/photos/cleanup-s3/:s3Key", async function (req, res) {
