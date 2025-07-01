@@ -292,21 +292,46 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
 
       // performBatchUpload関数内のサムネイル生成部分にデバッグログを追加
 
+      // src/components/PhotoUpload.tsx
+      // performBatchUpload関数のサムネイル生成部分にデバッグログを追加
+
+      // エラーハンドリング用のユーティリティ関数
+      const getErrorMessage = (error: unknown): string => {
+        if (error instanceof Error) return error.message;
+        if (typeof error === "string") return error;
+        return "Unknown error occurred";
+      };
+
+      const getErrorDetails = (error: unknown) => {
+        if (error instanceof Error) {
+          return {
+            name: error.name,
+            message: error.message,
+            stack: error.stack,
+          };
+        }
+        return {
+          message: String(error),
+          type: typeof error,
+        };
+      };
+
       if (videoFiles.length > 0) {
         console.log(`🎬 ${videoFiles.length}個の動画のサムネイル生成を開始...`);
-
-        // デバッグ: 動画ファイルの詳細情報をログ出力
-        console.log("📹 動画ファイル詳細:", videoFiles);
+        console.log("📹 動画ファイル詳細:", JSON.stringify(videoFiles, null, 2));
 
         for (const videoFile of videoFiles) {
           try {
-            // デバッグ: リクエストボディをログ出力
+            console.log(`🔄 サムネイル生成開始: ${videoFile.fileName}`);
+
             const requestBody = {
               photoId: videoFile.photoId,
               videoS3Key: videoFile.s3Key,
-              uploadedAt: uploadedAt, // uploadedAtも送信してみる
+              uploadedAt: uploadedAt,
             };
-            console.log(`🔍 サムネイル生成リクエスト:`, requestBody);
+
+            console.log(`📤 サムネイル生成リクエスト:`, JSON.stringify(requestBody, null, 2));
+            console.log(`🌐 API エンドポイント: ${API_BASE}/photos/generate-thumbnail`);
 
             const thumbnailResponse = await fetch(`${API_BASE}/photos/generate-thumbnail`, {
               method: "POST",
@@ -317,27 +342,85 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
               body: JSON.stringify(requestBody),
             });
 
-            const thumbnailResult = await thumbnailResponse.json();
+            console.log(`📊 HTTP ステータス: ${thumbnailResponse.status} ${thumbnailResponse.statusText}`);
 
-            // デバッグ: レスポンス詳細をログ出力
-            console.log(`📊 サムネイル生成レスポンス:`, thumbnailResult);
+            let thumbnailResult;
+            try {
+              thumbnailResult = await thumbnailResponse.json();
+              console.log(`📥 サムネイル生成レスポンス:`, JSON.stringify(thumbnailResult, null, 2));
+            } catch (parseError) {
+              console.error(`❌ レスポンス解析エラー: ${videoFile.fileName}`, parseError);
+              console.log(`📄 生レスポンス:`, await thumbnailResponse.text());
+              continue;
+            }
 
             if (thumbnailResult.success) {
-              console.log(`✅ サムネイル生成完了: ${videoFile.fileName}`);
-            } else {
-              console.warn(`⚠️ サムネイル生成失敗: ${videoFile.fileName}`, thumbnailResult.message);
+              console.log(`✅ サムネイル生成成功: ${videoFile.fileName}`);
+              console.log(`🖼️ サムネイルURL: ${thumbnailResult.thumbnailUrl}`);
 
-              // デバッグ: エラーの詳細情報
+              // サムネイル生成成功をローカルストレージに記録（デバッグ用）
+              const debugInfo = {
+                photoId: videoFile.photoId,
+                fileName: videoFile.fileName,
+                thumbnailUrl: thumbnailResult.thumbnailUrl,
+                generatedAt: new Date().toISOString(),
+                success: true,
+              };
+
+              // デバッグ情報をローカルストレージに保存
+              const existingDebug = localStorage.getItem("thumbnailDebug") || "[]";
+              const debugArray = JSON.parse(existingDebug);
+              debugArray.push(debugInfo);
+              localStorage.setItem("thumbnailDebug", JSON.stringify(debugArray));
+            } else {
+              console.warn(`⚠️ サムネイル生成失敗: ${videoFile.fileName}`);
+              console.warn(`💬 エラーメッセージ: ${thumbnailResult.message}`);
+
               if (thumbnailResult.debug) {
-                console.log(`🐛 デバッグ情報:`, thumbnailResult.debug);
+                console.log(`🐛 デバッグ情報:`, JSON.stringify(thumbnailResult.debug, null, 2));
               }
+
+              // サムネイル生成失敗をローカルストレージに記録（デバッグ用）
+              const debugInfo = {
+                photoId: videoFile.photoId,
+                fileName: videoFile.fileName,
+                error: thumbnailResult.message,
+                debug: thumbnailResult.debug,
+                generatedAt: new Date().toISOString(),
+                success: false,
+              };
+
+              const existingDebug = localStorage.getItem("thumbnailDebug") || "[]";
+              const debugArray = JSON.parse(existingDebug);
+              debugArray.push(debugInfo);
+              localStorage.setItem("thumbnailDebug", JSON.stringify(debugArray));
             }
           } catch (error) {
-            console.error(`❌ サムネイル生成エラー: ${videoFile.fileName}`, error);
+            // TypeScript用のエラー型安全化
+            const errorMessage = getErrorMessage(error);
+            const errorDetails = getErrorDetails(error);
+
+            console.error(`💥 サムネイル生成リクエストエラー: ${videoFile.fileName}`, error);
+            console.error(`📊 エラー詳細:`, errorDetails);
+
+            // エラー情報をローカルストレージに記録（デバッグ用）
+            const debugInfo = {
+              photoId: videoFile.photoId,
+              fileName: videoFile.fileName,
+              requestError: errorMessage,
+              errorDetails: errorDetails,
+              generatedAt: new Date().toISOString(),
+              success: false,
+            };
+
+            const existingDebug = localStorage.getItem("thumbnailDebug") || "[]";
+            const debugArray = JSON.parse(existingDebug);
+            debugArray.push(debugInfo);
+            localStorage.setItem("thumbnailDebug", JSON.stringify(debugArray));
           }
         }
 
-        console.log(`🎨 サムネイル生成処理完了（最大${videoFiles.length}件）`);
+        console.log(`🎨 サムネイル生成処理完了（${videoFiles.length}件処理）`);
       }
 
       // 完了処理（サムネイル生成の完了を待たずに実行）

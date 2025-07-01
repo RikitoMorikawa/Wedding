@@ -714,139 +714,290 @@ app.post("/photos/batch-save-album", async function (req, res) {
 });
 
 // ✅ 大幅改善版：generate-thumbnailエンドポイント
+// amplify/backend/function/weddingPhotosFunction/src/app.js
+// サムネイル生成エンドポイントにデバッグログを追加
+
+// amplify/backend/function/weddingPhotosFunction/src/app.js
+// サムネイル生成エンドポイントの環境変数修正
+
 app.post("/photos/generate-thumbnail", async function (req, res) {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Headers", "*");
 
-  try {
-    const { photoId, videoS3Key } = req.body;
+  console.log("🎬 サムネイル生成リクエスト開始");
+  console.log("📥 リクエストボディ:", JSON.stringify(req.body, null, 2));
 
-    if (!photoId || !videoS3Key) {
+  // 🔧 環境変数の確認とデバッグ
+  console.log("🔍 環境変数確認:");
+  console.log("  STORAGE_WEDDINGPHOTOS_NAME:", process.env.STORAGE_WEDDINGPHOTOS_NAME);
+  console.log("  STORAGE_PHOTOS_NAME:", process.env.STORAGE_PHOTOS_NAME);
+  console.log("  STORAGE_WEDDINGPHOTOS_BUCKETNAME:", process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME);
+
+  try {
+    const { photoId, videoS3Key, uploadedAt } = req.body;
+
+    // 入力値の検証とログ
+    if (!photoId) {
+      console.error("❌ photoId が未指定");
       return res.status(400).json({
         success: false,
-        message: "Missing required fields: photoId or videoS3Key",
+        message: "photoId is required",
+        debug: { received: req.body },
       });
     }
 
-    console.log(`🎬 サムネイル生成開始: photoId=${photoId}, videoS3Key=${videoS3Key}`);
-
-    // DynamoDBのテーブル名を取得
-    const tableName = process.env.STORAGE_PHOTOS_NAME;
-    if (!tableName) {
-      return res.status(500).json({
+    if (!videoS3Key) {
+      console.error("❌ videoS3Key が未指定");
+      return res.status(400).json({
         success: false,
-        message: "Environment variable STORAGE_PHOTOS_NAME not set",
+        message: "videoS3Key is required",
+        debug: { received: req.body },
       });
     }
 
-    // DynamoDBからphotoIdを検索 (Scanでフィルタリング)
-    let existingPhoto = null;
-    try {
-      const scanCommand = new ScanCommand({
-        TableName: tableName,
-        FilterExpression: "photoId = :photoId",
-        ExpressionAttributeValues: {
-          ":photoId": photoId,
+    console.log(`🔍 処理開始 - photoId: ${photoId}, videoS3Key: ${videoS3Key}`);
+
+    // 🔧 正しいテーブル名を特定
+    let tableName = process.env.STORAGE_WEDDINGPHOTOS_NAME || process.env.STORAGE_PHOTOS_NAME;
+
+    // 両方ともnullの場合、確認済みのテーブル名を設定
+    if (!tableName) {
+      tableName = "Photos-dev"; // ✅ 確認済みの実際のテーブル名
+      console.warn("⚠️ 環境変数が未設定のため、確認済みテーブル名を使用:", tableName);
+    }
+
+    console.log(`📋 使用するテーブル名: ${tableName}`);
+
+    // DynamoDBから動画レコードを取得
+    console.log("📋 DynamoDBから動画レコード取得中...");
+    const getCommand = new GetCommand({
+      TableName: tableName,
+      Key: { photoId: photoId },
+    });
+
+    const getResult = await docClient.send(getCommand);
+    console.log("📋 DynamoDB取得結果:", JSON.stringify(getResult, null, 2));
+
+    if (!getResult.Item) {
+      console.error(`❌ 動画レコードが見つかりません - photoId: ${photoId}`);
+      return res.status(404).json({
+        success: false,
+        message: "Video record not found",
+        debug: {
+          photoId,
+          tableName,
+          searched: true,
         },
       });
+    }
 
-      const scanResult = await docClient.send(scanCommand);
+    const videoRecord = getResult.Item;
+    console.log("✅ 動画レコード取得成功:", JSON.stringify(videoRecord, null, 2));
 
-      if (scanResult.Items && scanResult.Items.length > 0) {
-        existingPhoto = scanResult.Items[0];
-        console.log(`✅ 写真レコード発見: ${photoId}`);
-      } else {
-        return res.status(404).json({
-          success: false,
-          message: `Photo not found: ${photoId}`,
-        });
+    // 🔧 S3バケット名も確認
+    let bucketName = process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME;
+    if (!bucketName) {
+      // ✅ 確認済みの実際のバケット名
+      bucketName = "wedding3171c17ab5234e0fbf03519b4e2eab93e48b3-dev";
+      console.warn("⚠️ S3バケット名が未設定のため、確認済み値を使用:", bucketName);
+    }
+
+    console.log(`📦 使用するS3バケット: ${bucketName}`);
+
+    // S3から動画ファイルを取得
+    console.log(`📦 S3から動画ファイル取得中 - Key: ${videoS3Key}`);
+    const getObjectCommand = new GetObjectCommand({
+      Bucket: bucketName,
+      Key: videoS3Key.startsWith("public/") ? videoS3Key : `public/${videoS3Key}`,
+    });
+
+    let videoBuffer;
+    try {
+      const s3Response = await s3Client.send(getObjectCommand);
+      console.log("📦 S3レスポンス取得成功");
+
+      // ストリームをバッファに変換
+      const chunks = [];
+      for await (const chunk of s3Response.Body) {
+        chunks.push(chunk);
       }
-    } catch (dbScanError) {
-      console.error("DynamoDB Scan Error:", dbScanError);
+      videoBuffer = Buffer.concat(chunks);
+      console.log(`📦 動画バッファ作成完了 - サイズ: ${videoBuffer.length} bytes`);
+    } catch (s3Error) {
+      console.error("❌ S3からの動画取得エラー:", s3Error);
       return res.status(500).json({
         success: false,
-        message: `Database scan error: ${dbScanError.message}`,
+        message: "Failed to fetch video from S3",
+        debug: {
+          error: s3Error.message,
+          bucket: bucketName,
+          key: videoS3Key,
+          fullKey: videoS3Key.startsWith("public/") ? videoS3Key : `public/${videoS3Key}`,
+        },
       });
     }
 
-    // MediaConvertでサムネイル生成を試みる
+    // 一時ファイルパス作成
+    const tempDir = "/tmp";
+    const inputVideoPath = `${tempDir}/input_${Date.now()}.mp4`;
+    const outputImagePath = `${tempDir}/thumbnail_${Date.now()}.jpg`;
+
+    console.log(`📁 一時ファイルパス作成:`);
+    console.log(`   入力: ${inputVideoPath}`);
+    console.log(`   出力: ${outputImagePath}`);
+
+    // 動画ファイルを一時ファイルに保存
     try {
-      console.log(`🔄 MediaConvertでサムネイル生成を試行中...`);
-      const result = await generateVideoThumbnail(videoS3Key, photoId);
-
-      // DynamoDBのprocessingStatusを更新
-      const updatedPhoto = {
-        ...existingPhoto,
-        processingStatus: "processing",
-        thumbnailJobId: result.jobId,
-        thumbnailS3Key: result.thumbnailKey,
-        updatedAt: new Date().toISOString(),
-      };
-
-      const putCommand = new PutCommand({
-        TableName: tableName,
-        Item: updatedPhoto,
-      });
-
-      await docClient.send(putCommand);
-
-      console.log(`✅ MediaConvertジョブ開始成功: ${result.jobId}`);
-
-      return res.json({
-        success: true,
-        message: "Thumbnail generation started (MediaConvert)",
-        jobId: result.jobId,
-        thumbnailS3Key: result.thumbnailKey,
-        photoId: photoId,
-        method: "mediaconvert",
-      });
-    } catch (mcError) {
-      // MediaConvert失敗時はSVGプレースホルダー生成にフォールバック
-      console.error("MediaConvert失敗、SVGフォールバックに移行:", mcError);
-
-      const thumbnailS3Key = `thumbnails/${photoId}_thumbnail.svg`;
-      const placeholderImageBuffer = await generatePlaceholderThumbnail(photoId);
-
-      // S3へアップロード
-      await s3
-        .upload({
-          Bucket: process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME,
-          Key: `public/${thumbnailS3Key}`,
-          Body: placeholderImageBuffer,
-          ContentType: "image/svg+xml",
-        })
-        .promise();
-
-      // DynamoDB更新：ready状態、thumbnailS3Key登録
-      const completedPhoto = {
-        ...existingPhoto,
-        processingStatus: "ready",
-        thumbnailS3Key: thumbnailS3Key,
-        updatedAt: new Date().toISOString(),
-      };
-
-      const completePutCommand = new PutCommand({
-        TableName: tableName,
-        Item: completedPhoto,
-      });
-
-      await docClient.send(completePutCommand);
-
-      console.log(`✅ SVGプレースホルダー生成完了: ${thumbnailS3Key}`);
-
-      return res.json({
-        success: true,
-        message: "Thumbnail generated successfully (fallback SVG)",
-        thumbnailS3Key: thumbnailS3Key,
-        photoId: photoId,
-        method: "svg_fallback",
+      fs.writeFileSync(inputVideoPath, videoBuffer);
+      console.log("✅ 動画ファイル一時保存完了");
+    } catch (writeError) {
+      console.error("❌ 動画ファイル保存エラー:", writeError);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to save video file",
+        debug: { error: writeError.message },
       });
     }
+
+    // FFmpegでサムネイル生成
+    console.log("🎨 FFmpegでサムネイル生成開始...");
+    const ffmpegCommand = `/opt/ffmpeg -i "${inputVideoPath}" -vf "scale=400:300:force_original_aspect_ratio=decrease,pad=400:300:-1:-1:color=black" -frames:v 1 -q:v 2 "${outputImagePath}"`;
+    console.log(`🔧 FFmpegコマンド: ${ffmpegCommand}`);
+
+    try {
+      const { stdout, stderr } = await execPromise(ffmpegCommand);
+      console.log("✅ FFmpeg実行完了");
+      if (stdout) console.log("📤 FFmpeg stdout:", stdout);
+      if (stderr) console.log("📤 FFmpeg stderr:", stderr);
+    } catch (ffmpegError) {
+      console.error("❌ FFmpeg実行エラー:", ffmpegError);
+
+      // クリーンアップ
+      try {
+        fs.unlinkSync(inputVideoPath);
+        console.log("🧹 入力ファイル削除完了");
+      } catch (cleanupError) {
+        console.error("⚠️ 入力ファイル削除エラー:", cleanupError);
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: "FFmpeg processing failed",
+        debug: {
+          error: ffmpegError.message,
+          command: ffmpegCommand,
+        },
+      });
+    }
+
+    // サムネイル画像をS3にアップロード
+    console.log("☁️ サムネイル画像をS3にアップロード中...");
+    const thumbnailBuffer = fs.readFileSync(outputImagePath);
+    console.log(`📊 サムネイルバッファサイズ: ${thumbnailBuffer.length} bytes`);
+
+    const thumbnailS3Key = `thumbnails/${photoId}.jpg`;
+    console.log(`🔑 サムネイルS3キー: ${thumbnailS3Key}`);
+
+    const putObjectCommand = new PutObjectCommand({
+      Bucket: bucketName,
+      Key: `public/${thumbnailS3Key}`,
+      Body: thumbnailBuffer,
+      ContentType: "image/jpeg",
+    });
+
+    try {
+      await s3Client.send(putObjectCommand);
+      console.log("✅ S3アップロード完了");
+    } catch (uploadError) {
+      console.error("❌ S3アップロードエラー:", uploadError);
+
+      // クリーンアップ
+      try {
+        fs.unlinkSync(inputVideoPath);
+        fs.unlinkSync(outputImagePath);
+        console.log("🧹 一時ファイル削除完了");
+      } catch (cleanupError) {
+        console.error("⚠️ 一時ファイル削除エラー:", cleanupError);
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: "Failed to upload thumbnail to S3",
+        debug: {
+          error: uploadError.message,
+          key: `public/${thumbnailS3Key}`,
+        },
+      });
+    }
+
+    // DynamoDBを更新（サムネイルURL追加）
+    console.log("💾 DynamoDBにサムネイルURL更新中...");
+    const thumbnailUrl = `https://${bucketName}.s3.ap-northeast-1.amazonaws.com/public/${thumbnailS3Key}`;
+    console.log(`🔗 サムネイルURL: ${thumbnailUrl}`);
+
+    const updateCommand = new UpdateCommand({
+      TableName: tableName,
+      Key: { photoId: photoId },
+      UpdateExpression: "SET thumbnailUrl = :thumbnailUrl, thumbnailGeneratedAt = :generatedAt",
+      ExpressionAttributeValues: {
+        ":thumbnailUrl": thumbnailUrl,
+        ":generatedAt": new Date().toISOString(),
+      },
+    });
+
+    try {
+      await docClient.send(updateCommand);
+      console.log("✅ DynamoDB更新完了");
+    } catch (dbError) {
+      console.error("❌ DynamoDB更新エラー:", dbError);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to update database",
+        debug: {
+          error: dbError.message,
+          photoId: photoId,
+          tableName: tableName,
+        },
+      });
+    }
+
+    // 一時ファイル削除
+    console.log("🧹 一時ファイル削除中...");
+    try {
+      fs.unlinkSync(inputVideoPath);
+      fs.unlinkSync(outputImagePath);
+      console.log("✅ 一時ファイル削除完了");
+    } catch (cleanupError) {
+      console.error("⚠️ 一時ファイル削除エラー:", cleanupError);
+    }
+
+    console.log("🎉 サムネイル生成処理完全完了");
+
+    res.json({
+      success: true,
+      message: "Thumbnail generated successfully",
+      photoId: photoId,
+      thumbnailUrl: thumbnailUrl,
+      debug: {
+        videoS3Key: videoS3Key,
+        thumbnailS3Key: thumbnailS3Key,
+        tableName: tableName,
+        bucketName: bucketName,
+        processedAt: new Date().toISOString(),
+      },
+    });
   } catch (error) {
-    console.error("❌ サムネイル生成の全般的なエラー:", error);
+    console.error("💥 サムネイル生成処理で予期しないエラー:", error);
+    console.error("📊 エラースタック:", error.stack);
+
     res.status(500).json({
       success: false,
-      message: error.message || "Internal server error",
+      message: "Internal server error during thumbnail generation",
+      debug: {
+        error: error.message,
+        stack: error.stack,
+        timestamp: new Date().toISOString(),
+      },
     });
   }
 });
