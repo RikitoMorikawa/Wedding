@@ -715,10 +715,7 @@ app.post("/photos/batch-save-album", async function (req, res) {
 
 // ✅ 大幅改善版：generate-thumbnailエンドポイント
 // amplify/backend/function/weddingPhotosFunction/src/app.js
-// サムネイル生成エンドポイントにデバッグログを追加
-
-// amplify/backend/function/weddingPhotosFunction/src/app.js
-// サムネイル生成エンドポイントの環境変数修正
+// サムネイル生成エンドポイントの複合キー対応修正
 
 app.post("/photos/generate-thumbnail", async function (req, res) {
   res.header("Access-Control-Allow-Origin", "*");
@@ -768,17 +765,59 @@ app.post("/photos/generate-thumbnail", async function (req, res) {
 
     console.log(`📋 使用するテーブル名: ${tableName}`);
 
-    // DynamoDBから動画レコードを取得
+    // 🔧 DynamoDBから動画レコードを取得（複合キー対応）
     console.log("📋 DynamoDBから動画レコード取得中...");
-    const getCommand = new GetCommand({
-      TableName: tableName,
-      Key: { photoId: photoId },
-    });
 
-    const getResult = await docClient.send(getCommand);
-    console.log("📋 DynamoDB取得結果:", JSON.stringify(getResult, null, 2));
+    let videoRecord = null;
 
-    if (!getResult.Item) {
+    // Method 1: uploadedAtが提供されている場合、GetCommandを試行
+    if (uploadedAt) {
+      console.log(`🔑 複合キー使用: photoId=${photoId}, uploadedAt=${uploadedAt}`);
+      try {
+        const getCommand = new GetCommand({
+          TableName: tableName,
+          Key: {
+            photoId: photoId,
+            uploadedAt: uploadedAt,
+          },
+        });
+
+        const getResult = await docClient.send(getCommand);
+        if (getResult.Item) {
+          videoRecord = getResult.Item;
+          console.log("✅ GetCommandで動画レコード取得成功");
+        } else {
+          console.log("⚠️ GetCommandで見つからず、Scanにフォールバック");
+        }
+      } catch (getError) {
+        console.warn("⚠️ GetCommandエラー、Scanにフォールバック:", getError.message);
+      }
+    }
+
+    // Method 2: GetCommandで見つからない場合、または uploadedAt が未提供の場合、Scanを使用
+    if (!videoRecord) {
+      console.log(`🔍 Scanでphotoを検索中: photoId=${photoId}`);
+      try {
+        const scanCommand = new ScanCommand({
+          TableName: tableName,
+          FilterExpression: "photoId = :photoId",
+          ExpressionAttributeValues: {
+            ":photoId": photoId,
+          },
+          Limit: 1,
+        });
+
+        const scanResult = await docClient.send(scanCommand);
+        if (scanResult.Items && scanResult.Items.length > 0) {
+          videoRecord = scanResult.Items[0];
+          console.log("✅ Scanで動画レコード取得成功");
+        }
+      } catch (scanError) {
+        console.error("❌ Scanでもエラー:", scanError.message);
+      }
+    }
+
+    if (!videoRecord) {
       console.error(`❌ 動画レコードが見つかりません - photoId: ${photoId}`);
       return res.status(404).json({
         success: false,
@@ -786,13 +825,25 @@ app.post("/photos/generate-thumbnail", async function (req, res) {
         debug: {
           photoId,
           tableName,
-          searched: true,
+          uploadedAt,
+          searchedWith: uploadedAt ? "GetCommand + Scan" : "Scan only",
         },
       });
     }
 
-    const videoRecord = getResult.Item;
-    console.log("✅ 動画レコード取得成功:", JSON.stringify(videoRecord, null, 2));
+    console.log(
+      "✅ 動画レコード取得成功:",
+      JSON.stringify(
+        {
+          photoId: videoRecord.photoId,
+          uploadedAt: videoRecord.uploadedAt,
+          s3Key: videoRecord.s3Key,
+          mediaType: videoRecord.mediaType,
+        },
+        null,
+        2
+      )
+    );
 
     // 🔧 S3バケット名も確認
     let bucketName = process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME;
@@ -861,7 +912,7 @@ app.post("/photos/generate-thumbnail", async function (req, res) {
 
     // FFmpegでサムネイル生成
     console.log("🎨 FFmpegでサムネイル生成開始...");
-    const ffmpegCommand = `/opt/ffmpeg -i "${inputVideoPath}" -vf "scale=400:300:force_original_aspect_ratio=decrease,pad=400:300:-1:-1:color=black" -frames:v 1 -q:v 2 "${outputImagePath}"`;
+    const ffmpegCommand = `/opt/ffmpeg -i "${inputVideoPath}" -ss 00:00:01 -vframes 1 -q:v 5 -s 400x300 "${outputImagePath}"`;
     console.log(`🔧 FFmpegコマンド: ${ffmpegCommand}`);
 
     try {
@@ -930,14 +981,18 @@ app.post("/photos/generate-thumbnail", async function (req, res) {
       });
     }
 
-    // DynamoDBを更新（サムネイルURL追加）
+    // 🔧 DynamoDBを更新（複合キー対応）
     console.log("💾 DynamoDBにサムネイルURL更新中...");
     const thumbnailUrl = `https://${bucketName}.s3.ap-northeast-1.amazonaws.com/public/${thumbnailS3Key}`;
     console.log(`🔗 サムネイルURL: ${thumbnailUrl}`);
 
+    // 複合キーを使用してUpdateCommand実行
     const updateCommand = new UpdateCommand({
       TableName: tableName,
-      Key: { photoId: photoId },
+      Key: {
+        photoId: photoId,
+        uploadedAt: videoRecord.uploadedAt, // ✅ 取得したレコードのuploadedAtを使用
+      },
       UpdateExpression: "SET thumbnailUrl = :thumbnailUrl, thumbnailGeneratedAt = :generatedAt",
       ExpressionAttributeValues: {
         ":thumbnailUrl": thumbnailUrl,
@@ -956,6 +1011,7 @@ app.post("/photos/generate-thumbnail", async function (req, res) {
         debug: {
           error: dbError.message,
           photoId: photoId,
+          uploadedAt: videoRecord.uploadedAt,
           tableName: tableName,
         },
       });
@@ -983,6 +1039,7 @@ app.post("/photos/generate-thumbnail", async function (req, res) {
         thumbnailS3Key: thumbnailS3Key,
         tableName: tableName,
         bucketName: bucketName,
+        uploadedAt: videoRecord.uploadedAt,
         processedAt: new Date().toISOString(),
       },
     });
