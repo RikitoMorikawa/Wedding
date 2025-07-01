@@ -507,7 +507,8 @@ app.post("/photos/batch-save-album", async function (req, res) {
 });
 
 // ✅ 修正版：generate-thumbnailエンドポイント
-// ✅ 修正版：generate-thumbnailエンドポイント（DynamoDBスキーマ対応）
+// ✅ 最終修正版：generate-thumbnailエンドポイント
+// DynamoDB複合キー（photoId + uploadedAt）対応版
 
 app.post("/photos/generate-thumbnail", async function (req, res) {
   res.header("Access-Control-Allow-Origin", "*");
@@ -523,84 +524,67 @@ app.post("/photos/generate-thumbnail", async function (req, res) {
       });
     }
 
-    console.log(`🎬 サムネイル生成開始: photoId=${photoId}, videoS3Key=${videoS3Key}`);
+    console.log(`🎬 サムネイル生成開始: photoId=${photoId}`);
 
     const thumbnailS3Key = `thumbnails/${photoId}_thumbnail.jpg`;
 
-    // ✅ Step 1: 既存レコードをScanで検索（photoIdが複合キーの場合の対策）
+    // ✅ Step 1: 複合キー対応の検索
     let existingPhoto;
     try {
-      console.log(`🔍 photoId=${photoId} でレコード検索中...`);
-      
-      // まず単純なGetを試行
-      const getCommand = new GetCommand({
+      console.log(`🔍 複合キーテーブル対応でphotoId=${photoId}を検索中...`);
+
+      // 複合キーテーブルの場合、Scanで検索（uploadedAtが不明なため）
+      const scanCommand = new ScanCommand({
         TableName: process.env.STORAGE_PHOTOS_NAME,
-        Key: { photoId }
+        FilterExpression: "photoId = :photoId",
+        ExpressionAttributeValues: {
+          ":photoId": photoId,
+        },
+        Limit: 1,
       });
 
-      const getResult = await docClient.send(getCommand);
-      existingPhoto = getResult.Item;
+      const scanResult = await docClient.send(scanCommand);
+      const items = scanResult.Items || [];
 
-      if (!existingPhoto) {
-        console.log(`⚠️ GetCommandで見つからず。Scanで検索中...`);
-        
-        // GetCommandで見つからない場合、Scanで検索
-        const scanCommand = new ScanCommand({
-          TableName: process.env.STORAGE_PHOTOS_NAME,
-          FilterExpression: "photoId = :photoId",
-          ExpressionAttributeValues: {
-            ":photoId": photoId
-          },
-          Limit: 1
-        });
-
-        const scanResult = await docClient.send(scanCommand);
-        const items = scanResult.Items || [];
-        
-        if (items.length > 0) {
-          existingPhoto = items[0];
-          console.log(`✅ Scanで発見: ${JSON.stringify(Object.keys(existingPhoto))}`);
-        }
+      if (items.length > 0) {
+        existingPhoto = items[0];
+        console.log(`✅ 写真レコード発見: photoId=${existingPhoto.photoId}, uploadedAt=${existingPhoto.uploadedAt}`);
       } else {
-        console.log(`✅ GetCommandで発見: ${JSON.stringify(Object.keys(existingPhoto))}`);
-      }
-
-      if (!existingPhoto) {
-        console.error(`❌ Photo not found: ${photoId}`);
+        console.error(`❌ 写真が見つかりません: photoId=${photoId}`);
         return res.status(404).json({
           success: false,
           message: `Photo not found: ${photoId}`,
           debug: {
-            searchMethod: "both_get_and_scan",
-            photoId: photoId
-          }
+            tableName: process.env.STORAGE_PHOTOS_NAME,
+            searchMethod: "scan_with_filter",
+            photoId: photoId,
+          },
         });
       }
-
-    } catch (getError) {
-      console.error(`❌ レコード取得エラー:`, getError);
+    } catch (searchError) {
+      console.error(`❌ 写真検索エラー:`, searchError);
       return res.status(500).json({
         success: false,
-        message: `Failed to get existing photo: ${getError.message}`,
+        message: `Failed to find photo: ${searchError.message}`,
         debug: {
-          error: getError.name,
-          photoId: photoId
-        }
+          error: searchError.name,
+          photoId: photoId,
+        },
       });
     }
 
-    // ✅ Step 2: PutCommandで全体を更新（処理状態を'processing'に）
+    // ✅ Step 2: 処理状態を'processing'に更新
     try {
       const updatedPhoto = {
         ...existingPhoto,
-        processingStatus: 'processing',
+        processingStatus: "processing",
         thumbnailS3Key: thumbnailS3Key,
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       };
 
       const putCommand = new PutCommand({
         TableName: process.env.STORAGE_PHOTOS_NAME,
-        Item: updatedPhoto
+        Item: updatedPhoto,
       });
 
       await docClient.send(putCommand);
@@ -609,24 +593,24 @@ app.post("/photos/generate-thumbnail", async function (req, res) {
       console.error(`❌ 処理状態更新エラー:`, updateError);
       return res.status(500).json({
         success: false,
-        message: `Failed to update processing status: ${updateError.message}`
+        message: `Failed to update processing status: ${updateError.message}`,
       });
     }
 
-    // ✅ Step 3: サムネイル生成（SVG版）
+    // ✅ Step 3: SVGサムネイル生成
     let placeholderImageBuffer;
     try {
       placeholderImageBuffer = await generatePlaceholderThumbnail(photoId);
-      console.log(`✅ プレースホルダー画像生成完了: ${placeholderImageBuffer.length}バイト`);
+      console.log(`✅ SVGサムネイル生成完了: ${placeholderImageBuffer.length}バイト`);
     } catch (imageError) {
-      console.error(`❌ 画像生成エラー:`, imageError);
+      console.error(`❌ サムネイル生成エラー:`, imageError);
       return res.status(500).json({
         success: false,
-        message: `Failed to generate thumbnail: ${imageError.message}`
+        message: `Failed to generate thumbnail: ${imageError.message}`,
       });
     }
 
-    // ✅ Step 4: S3にアップロード
+    // ✅ Step 4: S3アップロード
     try {
       const uploadResult = await s3
         .upload({
@@ -642,7 +626,7 @@ app.post("/photos/generate-thumbnail", async function (req, res) {
       console.error(`❌ S3アップロードエラー:`, s3Error);
       return res.status(500).json({
         success: false,
-        message: `Failed to upload to S3: ${s3Error.message}`
+        message: `Failed to upload to S3: ${s3Error.message}`,
       });
     }
 
@@ -650,14 +634,14 @@ app.post("/photos/generate-thumbnail", async function (req, res) {
     try {
       const completedPhoto = {
         ...existingPhoto,
-        processingStatus: 'ready',
+        processingStatus: "ready",
         thumbnailS3Key: thumbnailS3Key,
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       };
 
       const completePutCommand = new PutCommand({
         TableName: process.env.STORAGE_PHOTOS_NAME,
-        Item: completedPhoto
+        Item: completedPhoto,
       });
 
       await docClient.send(completePutCommand);
@@ -666,7 +650,7 @@ app.post("/photos/generate-thumbnail", async function (req, res) {
       console.error(`❌ 完了状態更新エラー:`, completeError);
       return res.status(500).json({
         success: false,
-        message: `Failed to update completion status: ${completeError.message}`
+        message: `Failed to update completion status: ${completeError.message}`,
       });
     }
 
@@ -675,8 +659,12 @@ app.post("/photos/generate-thumbnail", async function (req, res) {
       message: "Thumbnail generated successfully",
       thumbnailS3Key: thumbnailS3Key,
       photoId: photoId,
+      debug: {
+        tableStructure: "composite_key_photoId_uploadedAt",
+        searchMethod: "scan_filter",
+        originalUploadedAt: existingPhoto.uploadedAt,
+      },
     });
-
   } catch (error) {
     console.error("❌ サムネイル生成の全般的なエラー:", error);
     res.status(500).json({
@@ -684,11 +672,36 @@ app.post("/photos/generate-thumbnail", async function (req, res) {
       message: error.message || "Internal server error",
       debug: {
         error: error.name,
-        stack: error.stack
-      }
+        photoId: req.body?.photoId,
+      },
     });
   }
 });
+
+// ✅ SVGプレースホルダー生成関数（変更なし）
+async function generatePlaceholderThumbnail(photoId) {
+  try {
+    const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg width="300" height="300" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#667eea;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#764ba2;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect width="300" height="300" fill="url(#grad)" />
+  <circle cx="150" cy="150" r="40" fill="rgba(255,255,255,0.9)" />
+  <polygon points="135,135 135,165 165,150" fill="#667eea" />
+  <text x="150" y="200" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="16" font-family="Arial">VIDEO</text>
+  <text x="150" y="220" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="12" font-family="Arial">${photoId.substring(0, 8)}</text>
+</svg>`;
+
+    return Buffer.from(svg, "utf8");
+  } catch (error) {
+    console.error("SVG generation error:", error);
+    throw error;
+  }
+}
 
 // ✅ デバッグ用：テーブル構造確認エンドポイント（強化版）
 app.get("/debug/photo/:photoId", async function (req, res) {
@@ -704,21 +717,40 @@ app.get("/debug/photo/:photoId", async function (req, res) {
 
     // 1. GetCommandで試行
     try {
-      const getCommand = new GetCommand({
+      console.log(`🔍 複合キーテーブル対応でphotoId=${photoId}を検索中...`);
+
+      // ScanCommandを使用してphotoIdでフィルタリング
+      const scanCommand = new ScanCommand({
         TableName: process.env.STORAGE_PHOTOS_NAME,
-        Key: { photoId }
+        FilterExpression: "photoId = :photoId",
+        ExpressionAttributeValues: {
+          ":photoId": photoId,
+        },
+        Limit: 1,
       });
 
-      const getResult = await docClient.send(getCommand);
+      const scanResult = await docClient.send(scanCommand);
+      const items = scanResult.Items || [];
+
+      if (items.length > 0) {
+        existingPhoto = items[0];
+        console.log(`✅ 写真レコード発見: photoId=${existingPhoto.photoId}, uploadedAt=${existingPhoto.uploadedAt}`);
+      } else {
+        console.error(`❌ 写真が見つかりません: photoId=${photoId}`);
+        return res.status(404).json({
+          success: false,
+          message: `Photo not found: ${photoId}`,
+        });
+      }
       results.getCommand = {
         found: !!getResult.Item,
-        item: getResult.Item || null
+        item: getResult.Item || null,
       };
       console.log(`GetCommand結果: ${!!getResult.Item ? "発見" : "未発見"}`);
     } catch (getError) {
       results.getCommand = {
         error: getError.message,
-        errorName: getError.name
+        errorName: getError.name,
       };
       console.log(`GetCommandエラー: ${getError.message}`);
     }
@@ -729,22 +761,22 @@ app.get("/debug/photo/:photoId", async function (req, res) {
         TableName: process.env.STORAGE_PHOTOS_NAME,
         FilterExpression: "photoId = :photoId",
         ExpressionAttributeValues: {
-          ":photoId": photoId
+          ":photoId": photoId,
         },
-        Limit: 5
+        Limit: 5,
       });
 
       const scanResult = await docClient.send(scanCommand);
       results.scanCommand = {
         found: (scanResult.Items || []).length > 0,
         items: scanResult.Items || [],
-        count: (scanResult.Items || []).length
+        count: (scanResult.Items || []).length,
       };
       console.log(`Scan結果: ${(scanResult.Items || []).length}件発見`);
     } catch (scanError) {
       results.scanCommand = {
         error: scanError.message,
-        errorName: scanError.name
+        errorName: scanError.name,
       };
       console.log(`Scanエラー: ${scanError.message}`);
     }
@@ -753,22 +785,22 @@ app.get("/debug/photo/:photoId", async function (req, res) {
     try {
       const sampleScanCommand = new ScanCommand({
         TableName: process.env.STORAGE_PHOTOS_NAME,
-        Limit: 5
+        Limit: 5,
       });
 
       const sampleResult = await docClient.send(sampleScanCommand);
       results.sampleItems = {
         count: (sampleResult.Items || []).length,
-        items: (sampleResult.Items || []).map(item => ({
+        items: (sampleResult.Items || []).map((item) => ({
           photoId: item.photoId,
           albumId: item.albumId,
-          keys: Object.keys(item)
-        }))
+          keys: Object.keys(item),
+        })),
       };
       console.log(`サンプルアイテム: ${(sampleResult.Items || []).length}件取得`);
     } catch (sampleError) {
       results.sampleItems = {
-        error: sampleError.message
+        error: sampleError.message,
       };
     }
 
@@ -777,15 +809,14 @@ app.get("/debug/photo/:photoId", async function (req, res) {
       photoId: photoId,
       tableName: process.env.STORAGE_PHOTOS_NAME,
       results: results,
-      recommendations: generateRecommendations(results)
+      recommendations: generateRecommendations(results),
     });
-
   } catch (error) {
     console.error("Debug error:", error);
     res.status(500).json({
       success: false,
       error: error.message,
-      tableName: process.env.STORAGE_PHOTOS_NAME
+      tableName: process.env.STORAGE_PHOTOS_NAME,
     });
   }
 });
@@ -806,7 +837,7 @@ function generateRecommendations(results) {
 
   if (results.sampleItems?.items?.length > 0) {
     const sampleKeys = results.sampleItems.items[0]?.keys || [];
-    if (sampleKeys.includes('albumId')) {
+    if (sampleKeys.includes("albumId")) {
       recommendations.push("albumIdとphotoIdの複合キーを試してください");
     }
   }

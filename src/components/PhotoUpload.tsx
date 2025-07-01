@@ -216,6 +216,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
       // Step 2: 全ファイルをS3に並行アップロード
       const uploadPromises = selectedFiles.map(async (selectedFile, index) => {
         const uploadInfo = urlResult.uploadUrls[index];
+        const generatedPhotoId = uuidv4(); 
 
         try {
           const response = await fetch(uploadInfo.uploadURL, {
@@ -230,7 +231,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
 
           return {
             success: true,
-            photoId: uuidv4(),
+            photoId: generatedPhotoId,
             s3Key: uploadInfo.s3Key,
             mediaType: uploadInfo.mediaType,
             fileType: uploadInfo.fileType,

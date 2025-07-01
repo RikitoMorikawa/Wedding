@@ -533,7 +533,6 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
 
       // Step 2: バッチAPIでお気に入り情報を取得
       if (sortedAlbums.length > 0 && userInfo?.passcode) {
-        console.log("⏳ お気に入り情報をバッチ取得中...");
 
         try {
           const albumIds = sortedAlbums.map((album) => album.albumId);
@@ -552,7 +551,6 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
 
             if (batchResult.success) {
               // 📊 取得した情報をログ出力
-              console.log(`📊 バッチ結果:`, batchResult.results);
 
               let favoriteCount = 0;
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -571,7 +569,6 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
                 }))
               );
 
-              console.log(`✅ ${albumIds.length}個のアルバムのお気に入り情報を更新完了`);
             } else {
               console.warn("⚠️ バッチお気に入り取得でエラー:", batchResult.message);
             }
