@@ -2,6 +2,7 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const awsServerlessExpressMiddleware = require("aws-serverless-express/middleware");
 const { TransactWriteCommand } = require("@aws-sdk/lib-dynamodb");
+const { MediaConvertClient, CreateJobCommand } = require("@aws-sdk/client-mediaconvert");
 
 // ✅ 必要なimport（S3とDynamoDB両方）
 const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
@@ -512,9 +513,7 @@ app.post("/photos/generate-thumbnail", async function (req, res) {
   res.header("Access-Control-Allow-Headers", "*");
 
   try {
-    const { photoId, videoS3Key, uploadedAt } = req.body;
-
-    console.log(`🔍 generate-thumbnail リクエスト受信:`, { photoId, videoS3Key, uploadedAt });
+    const { photoId, videoS3Key } = req.body;
 
     if (!photoId || !videoS3Key) {
       return res.status(400).json({
@@ -523,149 +522,212 @@ app.post("/photos/generate-thumbnail", async function (req, res) {
       });
     }
 
-    // デバッグ: テーブル名を確認
-    console.log(`📊 Photos テーブル名: ${process.env.STORAGE_PHOTOS_NAME}`);
+    // DynamoDBのテーブル名を取得
+    const tableName = process.env.STORAGE_PHOTOS_NAME;
+    if (!tableName) {
+      return res.status(500).json({
+        success: false,
+        message: "Environment variable STORAGE_PHOTOS_NAME not set",
+      });
+    }
 
-    // まず、photoIdで検索してみる（GetCommandの代わりにScanを使用）
+    // DynamoDBからphotoIdを検索 (Scanでフィルタリング)
     let existingPhoto = null;
-
     try {
-      // ScanCommandを使用してphotoIdでフィルタリング
       const scanCommand = new ScanCommand({
-        TableName: process.env.STORAGE_PHOTOS_NAME,
+        TableName: tableName,
         FilterExpression: "photoId = :photoId",
         ExpressionAttributeValues: {
           ":photoId": photoId,
         },
       });
 
-      console.log(`🔍 Scanコマンド実行中...`);
       const scanResult = await docClient.send(scanCommand);
-
-      console.log(`📊 Scan結果: ${scanResult.Items?.length || 0}件のアイテムが見つかりました`);
 
       if (scanResult.Items && scanResult.Items.length > 0) {
         existingPhoto = scanResult.Items[0];
-        console.log(`✅ 写真レコード発見:`, {
-          photoId: existingPhoto.photoId,
-          uploadedAt: existingPhoto.uploadedAt,
-          mediaType: existingPhoto.mediaType,
-          s3Key: existingPhoto.s3Key,
-        });
       } else {
-        console.error(`❌ 写真が見つかりません: photoId=${photoId}`);
-
-        // デバッグ: テーブル内の全データを確認（開発環境のみ）
-        const debugScan = new ScanCommand({
-          TableName: process.env.STORAGE_PHOTOS_NAME,
-          Limit: 5, // 最初の5件のみ
+        return res.status(404).json({
+          success: false,
+          message: `Photo not found: ${photoId}`,
         });
-        const debugResult = await docClient.send(debugScan);
-        console.log(
-          `🐛 テーブル内のサンプルデータ:`,
-          debugResult.Items?.map((item) => ({
-            photoId: item.photoId,
-            uploadedAt: item.uploadedAt,
-          }))
-        );
       }
-    } catch (scanError) {
-      console.error(`❌ DynamoDB Scanエラー:`, scanError);
+    } catch (dbScanError) {
+      console.error("DynamoDB Scan Error:", dbScanError);
       return res.status(500).json({
         success: false,
-        message: `Database scan error: ${scanError.message}`,
-        debug: {
-          error: scanError.name,
-          photoId: photoId,
-        },
+        message: `Database scan error: ${dbScanError.message}`,
       });
     }
 
-    if (!existingPhoto) {
-      return res.status(404).json({
-        success: false,
-        message: `Photo not found: ${photoId}`,
-        debug: {
-          photoId: photoId,
-          tableName: process.env.STORAGE_PHOTOS_NAME,
-          searchMethod: "scan_with_filter",
-        },
-      });
-    }
-
-    // 以下、既存のサムネイル生成処理...
-    const thumbnailS3Key = `thumbnails/${photoId}_thumbnail.svg`;
-
-    // 処理状態を更新
+    // MediaConvertでサムネイル生成を試みる
     try {
+      const result = await generateVideoThumbnail(videoS3Key, photoId);
+
+      // DynamoDBのprocessingStatusを更新
       const updatedPhoto = {
         ...existingPhoto,
         processingStatus: "processing",
+        thumbnailJobId: result.jobId,
+        thumbnailS3Key: result.thumbnailKey,
+        updatedAt: new Date().toISOString(),
       };
 
       const putCommand = new PutCommand({
-        TableName: process.env.STORAGE_PHOTOS_NAME,
+        TableName: tableName,
         Item: updatedPhoto,
       });
 
       await docClient.send(putCommand);
-      console.log(`✅ 処理状態を'processing'に更新`);
-    } catch (updateError) {
-      console.error(`❌ 処理状態更新エラー:`, updateError);
+
+      return res.json({
+        success: true,
+        message: "Thumbnail generation started (MediaConvert)",
+        jobId: result.jobId,
+        thumbnailS3Key: result.thumbnailKey,
+        photoId: photoId,
+      });
+    } catch (mcError) {
+      // MediaConvert失敗時はSVGプレースホルダー生成にフォールバック
+      console.error("MediaConvert failed, falling back to SVG:", mcError);
+
+      const thumbnailS3Key = `thumbnails/${photoId}_thumbnail.svg`;
+      const placeholderImageBuffer = await generatePlaceholderThumbnail(photoId);
+
+      // S3へアップロード
+      await s3
+        .upload({
+          Bucket: process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME,
+          Key: `public/${thumbnailS3Key}`,
+          Body: placeholderImageBuffer,
+          ContentType: "image/svg+xml",
+        })
+        .promise();
+
+      // DynamoDB更新：ready状態、thumbnailS3Key登録
+      const completedPhoto = {
+        ...existingPhoto,
+        processingStatus: "ready",
+        thumbnailS3Key: thumbnailS3Key,
+        updatedAt: new Date().toISOString(),
+      };
+
+      const completePutCommand = new PutCommand({
+        TableName: tableName,
+        Item: completedPhoto,
+      });
+
+      await docClient.send(completePutCommand);
+
+      return res.json({
+        success: true,
+        message: "Thumbnail generated successfully (fallback SVG)",
+        thumbnailS3Key: thumbnailS3Key,
+        photoId: photoId,
+      });
     }
-
-    // SVGサムネイル生成
-    const placeholderImageBuffer = await generatePlaceholderThumbnail(photoId);
-
-    // S3アップロード
-    await s3
-      .upload({
-        Bucket: process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME,
-        Key: `public/${thumbnailS3Key}`,
-        Body: placeholderImageBuffer,
-        ContentType: "image/svg+xml",
-      })
-      .promise();
-
-    // 完了状態に更新
-    const completedPhoto = {
-      ...existingPhoto,
-      processingStatus: "ready",
-      thumbnailS3Key: thumbnailS3Key,
-      updatedAt: new Date().toISOString(),
-    };
-
-    const completePutCommand = new PutCommand({
-      TableName: process.env.STORAGE_PHOTOS_NAME,
-      Item: completedPhoto,
-    });
-
-    await docClient.send(completePutCommand);
-
-    res.json({
-      success: true,
-      message: "Thumbnail generated successfully",
-      thumbnailS3Key: thumbnailS3Key,
-      photoId: photoId,
-      debug: {
-        foundPhoto: true,
-        uploadedAt: existingPhoto.uploadedAt,
-      },
-    });
   } catch (error) {
     console.error("❌ サムネイル生成の全般的なエラー:", error);
     res.status(500).json({
       success: false,
       message: error.message || "Internal server error",
-      debug: {
-        error: error.name,
-        photoId: req.body?.photoId,
-      },
     });
   }
 });
 
-// ✅ SVGプレースホルダー生成関数（変更なし）
+// MediaConvert クライアントの初期化
+const mediaConvertClient = new MediaConvertClient({
+  region: process.env.AWS_REGION,
+  endpoint: process.env.MEDIACONVERT_ENDPOINT, // 環境変数で設定
+});
+
+// 実際のサムネイル生成関数
+async function generateVideoThumbnail(videoS3Key, photoId) {
+  try {
+    const inputPath = `s3://${process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME}/public/${videoS3Key}`;
+    const outputPath = `s3://${process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME}/public/thumbnails/`;
+
+    const jobSettings = {
+      Role: process.env.MEDIACONVERT_ROLE_ARN, // MediaConvert用のIAMロール
+      Settings: {
+        Inputs: [
+          {
+            FileInput: inputPath,
+            VideoSelector: {
+              ColorSpace: "FOLLOW",
+              Rotate: "AUTO",
+            },
+            AudioSelectors: {
+              "Audio Selector 1": {
+                DefaultSelection: "DEFAULT",
+              },
+            },
+          },
+        ],
+        OutputGroups: [
+          {
+            Name: "Thumbnail",
+            OutputGroupSettings: {
+              Type: "FILE_GROUP_SETTINGS",
+              FileGroupSettings: {
+                Destination: outputPath,
+              },
+            },
+            Outputs: [
+              {
+                NameModifier: `${photoId}_thumb`,
+                ContainerSettings: {
+                  Container: "RAW",
+                },
+                VideoDescription: {
+                  CodecSettings: {
+                    Codec: "FRAME_CAPTURE",
+                    FrameCaptureSettings: {
+                      FramerateNumerator: 1,
+                      FramerateDenominator: 1,
+                      MaxCaptures: 1,
+                      Quality: 80,
+                    },
+                  },
+                  Width: 800,
+                  Height: 600,
+                  ScalingBehavior: "DEFAULT",
+                  TimecodeInsertion: "DISABLED",
+                  AntiAlias: "ENABLED",
+                  Sharpness: 50,
+                  VideoPreprocessors: {
+                    ImageInserter: {
+                      InsertableImages: [],
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        ],
+        TimecodeConfig: {
+          Source: "ZEROBASED",
+        },
+      },
+    };
+
+    const command = new CreateJobCommand(jobSettings);
+    const response = await mediaConvertClient.send(command);
+
+    console.log(`✅ MediaConvert ジョブ作成: ${response.Job.Id}`);
+
+    // ジョブIDを返す（ステータス確認用）
+    return {
+      jobId: response.Job.Id,
+      thumbnailKey: `thumbnails/${photoId}_thumb.0000000.jpg`,
+    };
+  } catch (error) {
+    console.error("❌ MediaConvert エラー:", error);
+    throw error;
+  }
+}
+
+// ✅ SVGプレースホルダー生成関数（フォールバック用）
 async function generatePlaceholderThumbnail(photoId) {
   try {
     const svg = `<?xml version="1.0" encoding="UTF-8"?>
@@ -682,7 +744,6 @@ async function generatePlaceholderThumbnail(photoId) {
   <text x="150" y="200" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="16" font-family="Arial">VIDEO</text>
   <text x="150" y="220" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="12" font-family="Arial">${photoId.substring(0, 8)}</text>
 </svg>`;
-
     return Buffer.from(svg, "utf8");
   } catch (error) {
     console.error("SVG generation error:", error);
