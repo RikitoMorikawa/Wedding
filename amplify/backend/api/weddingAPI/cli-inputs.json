@@ -1,8 +1,22 @@
 {
   "version": 1,
   "paths": {
-    "/{proxy+}": {
-      "name": "/{proxy+}",
+    "/photos": {
+      "name": "/photos",
+      "lambdaFunction": "weddingPhotosFunction",
+      "permissions": {
+        "setting": "open"
+      }
+    },
+    "/favorites": {
+      "name": "/favorites",
+      "lambdaFunction": "weddingPhotosFunction",
+      "permissions": {
+        "setting": "open"
+      }
+    },
+    "/albums": {
+      "name": "/albums",
       "lambdaFunction": "weddingPhotosFunction",
       "permissions": {
         "setting": "open"
