@@ -373,8 +373,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
 
             // ⭐ 修正: サムネイル生成を関数化してPromiseで返す
             const generateThumbnailWithFallback = async (): Promise<Blob> => {
-              // 複数タイムスタンプでの試行
-              const timeOffsets = [1.0, 2.0, 0]; // 試行順序
+              const timeOffsets = [0.5, 1.0, 2.0, 0]; // 試行順序
 
               for (const timeOffset of timeOffsets) {
                 try {
@@ -383,20 +382,19 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
                     height: 300,
                     timeOffset: timeOffset,
                     quality: 0.8,
+                    cropToFit: true, // ⭐ クロップ有効でスペースを削除
                   });
 
                   console.log(`✅ サムネイル生成成功 (${timeOffset}秒): ${blob.size} bytes`);
-                  return blob; // 成功したら即座に返す
+                  return blob;
                 } catch (timeOffsetError) {
                   console.warn(`⚠️ ${timeOffset}秒での生成失敗:`, timeOffsetError);
-                  // 次のタイムオフセットを試行
                 }
               }
 
               // すべてのタイムオフセットで失敗した場合
               console.warn(`⚠️ すべてのタイムオフセットで失敗、プレースホルダーを生成`);
 
-              // 詳細なエラーログ
               console.error("動画ファイル詳細:", {
                 name: originalFile.name,
                 type: originalFile.type,
@@ -404,7 +402,6 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
                 lastModified: originalFile.lastModified,
               });
 
-              // プレースホルダー生成（必ず成功）
               const placeholderBlob = await generatePlaceholderThumbnail(videoFile.photoId);
               console.log(`✅ プレースホルダー生成完了: ${placeholderBlob.size} bytes`);
               return placeholderBlob;

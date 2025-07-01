@@ -1,17 +1,20 @@
-// src/utils/videoThumbnail.ts - 修正版
+// src/utils/videoThumbnail.ts - アスペクト比修正版
+
 export interface ThumbnailOptions {
   width?: number;
   height?: number;
   timeOffset?: number;
   quality?: number;
+  cropToFit?: boolean; // ⭐ 新オプション: クロップするかどうか
 }
 
 export async function generateVideoThumbnail(videoFile: File, options: ThumbnailOptions = {}): Promise<Blob> {
   const {
     width = 400,
     height = 300,
-    timeOffset = 1, // ⭐ 修正1: 0.5秒に変更（真っ黒を回避）
+    timeOffset = 1,
     quality = 0.8,
+    cropToFit = true, // ⭐ デフォルトでクロップ有効
   } = options;
 
   return new Promise((resolve, reject) => {
@@ -45,7 +48,7 @@ export async function generateVideoThumbnail(videoFile: File, options: Thumbnail
         cleanup();
         reject(new Error("Video thumbnail generation timeout"));
       }
-    }, 10000); // ⭐ 修正2: タイムアウトを10秒に延長
+    }, 10000);
 
     const generateThumbnail = () => {
       if (hasResolved) return;
@@ -53,9 +56,7 @@ export async function generateVideoThumbnail(videoFile: File, options: Thumbnail
       try {
         console.log(`🎯 サムネイル生成実行: ${video.currentTime}秒, ${video.videoWidth}x${video.videoHeight}`);
 
-        // ⭐ 修正3: より厳密な動画状態チェック
         if (video.readyState < 2) {
-          // HAVE_CURRENT_DATA未満
           console.warn("動画データが準備されていません");
           throw new Error("Video not ready for thumbnail generation");
         }
@@ -64,38 +65,64 @@ export async function generateVideoThumbnail(videoFile: File, options: Thumbnail
           throw new Error("Invalid video dimensions");
         }
 
-        // ⭐ 修正4: 現在時刻のフレームが有効かチェック
         if (video.currentTime === 0 && timeOffset > 0) {
           console.warn("シークが完了していません、再試行します");
           setTimeout(() => generateThumbnail(), 100);
           return;
         }
 
-        // アスペクト比計算
+        // ⭐ 修正: アスペクト比に応じた描画方式の選択
         const videoAspect = video.videoWidth / video.videoHeight;
         const canvasAspect = width / height;
 
-        let drawWidth = width;
-        let drawHeight = height;
-        let offsetX = 0;
-        let offsetY = 0;
+        let drawWidth, drawHeight, offsetX, offsetY;
 
-        if (videoAspect > canvasAspect) {
-          drawHeight = width / videoAspect;
-          offsetY = (height - drawHeight) / 2;
+        if (cropToFit) {
+          // ⭐ オプション1: クロップして全面表示（スペースなし）
+          if (videoAspect > canvasAspect) {
+            // 横長動画: 高さを合わせて横をクロップ
+            drawHeight = height;
+            drawWidth = height * videoAspect;
+            offsetX = (width - drawWidth) / 2;
+            offsetY = 0;
+          } else {
+            // 縦長動画: 幅を合わせて縦をクロップ
+            drawWidth = width;
+            drawHeight = width / videoAspect;
+            offsetX = 0;
+            offsetY = (height - drawHeight) / 2;
+          }
+
+          // 背景は描画しない（全面が動画で埋まる）
+          ctx.drawImage(video, offsetX, offsetY, drawWidth, drawHeight);
         } else {
-          drawWidth = height * videoAspect;
-          offsetX = (width - drawWidth) / 2;
+          // ⭐ オプション2: レターボックス（上下または左右にスペース）
+          if (videoAspect > canvasAspect) {
+            // 横長動画: 幅を合わせて上下にスペース
+            drawWidth = width;
+            drawHeight = width / videoAspect;
+            offsetX = 0;
+            offsetY = (height - drawHeight) / 2;
+          } else {
+            // 縦長動画: 高さを合わせて左右にスペース
+            drawHeight = height;
+            drawWidth = height * videoAspect;
+            offsetX = (width - drawWidth) / 2;
+            offsetY = 0;
+          }
+
+          // ⭐ 背景を白またはグラデーションで描画
+          const gradient = ctx.createLinearGradient(0, 0, width, height);
+          gradient.addColorStop(0, "#f8fafc");
+          gradient.addColorStop(1, "#e2e8f0");
+          ctx.fillStyle = gradient;
+          ctx.fillRect(0, 0, width, height);
+
+          // 動画を中央に描画
+          ctx.drawImage(video, offsetX, offsetY, drawWidth, drawHeight);
         }
 
-        // ⭐ 修正5: 白い背景を描画（真っ黒を防ぐ）
-        ctx.fillStyle = "#FFFFFF";
-        ctx.fillRect(0, 0, width, height);
-
-        // 動画フレームを描画
-        ctx.drawImage(video, offsetX, offsetY, drawWidth, drawHeight);
-
-        // ⭐ 修正6: 描画結果をピクセルレベルでチェック
+        // ピクセルレベルでの検証
         const imageData = ctx.getImageData(0, 0, width, height);
         const pixels = imageData.data;
         let nonBlackPixels = 0;
@@ -105,7 +132,6 @@ export async function generateVideoThumbnail(videoFile: File, options: Thumbnail
           const g = pixels[i + 1];
           const b = pixels[i + 2];
           if (r > 10 || g > 10 || b > 10) {
-            // 完全な黒以外
             nonBlackPixels++;
           }
         }
@@ -147,17 +173,14 @@ export async function generateVideoThumbnail(videoFile: File, options: Thumbnail
       }
     };
 
-    // ⭐ 修正7: イベントハンドラーの改善
+    // イベントハンドラー設定（修正版と同じ）
     video.onloadedmetadata = () => {
       console.log(`📊 動画メタデータ読み込み完了: ${video.duration}秒`);
-
-      // 動画の長さに応じてタイムオフセットを調整
       const adjustedTimeOffset = Math.min(timeOffset, video.duration * 0.1);
 
       if (adjustedTimeOffset > 0) {
         video.currentTime = adjustedTimeOffset;
       } else {
-        // 最初のフレームを使用
         generateThumbnail();
       }
     };
@@ -348,3 +371,4 @@ export async function uploadThumbnailToS3(
     };
   }
 }
+
