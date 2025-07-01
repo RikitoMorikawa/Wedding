@@ -3,6 +3,7 @@ const bodyParser = require("body-parser");
 const awsServerlessExpressMiddleware = require("aws-serverless-express/middleware");
 const { TransactWriteCommand } = require("@aws-sdk/lib-dynamodb");
 const { MediaConvertClient, CreateJobCommand, DescribeEndpointsCommand } = require("@aws-sdk/client-mediaconvert");
+const { MediaConvertClient, CreateJobCommand, DescribeEndpointsCommand } = require("@aws-sdk/client-mediaconvert");
 
 // ✅ 必要なimport（S3とDynamoDB両方）
 const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
@@ -47,7 +48,7 @@ async function getMediaConvertEndpoint() {
 
     const command = new DescribeEndpointsCommand({});
     const response = await tempClient.send(command);
-    
+
     if (response.Endpoints && response.Endpoints.length > 0) {
       mediaConvertEndpoint = response.Endpoints[0].Url;
       console.log(`✅ MediaConvert endpoint取得: ${mediaConvertEndpoint}`);
@@ -559,6 +560,7 @@ app.post("/photos/batch-save-album", async function (req, res) {
 });
 
 // ✅ 大幅改善版：generate-thumbnailエンドポイント
+// ✅ 大幅改善版：generate-thumbnailエンドポイント
 app.post("/photos/generate-thumbnail", async function (req, res) {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Headers", "*");
@@ -572,6 +574,8 @@ app.post("/photos/generate-thumbnail", async function (req, res) {
         message: "Missing required fields: photoId or videoS3Key",
       });
     }
+
+    console.log(`🎬 サムネイル生成開始: photoId=${photoId}, videoS3Key=${videoS3Key}`);
 
     console.log(`🎬 サムネイル生成開始: photoId=${photoId}, videoS3Key=${videoS3Key}`);
 
@@ -617,6 +621,7 @@ app.post("/photos/generate-thumbnail", async function (req, res) {
     // MediaConvertでサムネイル生成を試みる
     try {
       console.log(`🔄 MediaConvertでサムネイル生成を試行中...`);
+      console.log(`🔄 MediaConvertでサムネイル生成を試行中...`);
       const result = await generateVideoThumbnail(videoS3Key, photoId);
 
       // DynamoDBのprocessingStatusを更新
@@ -637,6 +642,8 @@ app.post("/photos/generate-thumbnail", async function (req, res) {
 
       console.log(`✅ MediaConvertジョブ開始成功: ${result.jobId}`);
 
+      console.log(`✅ MediaConvertジョブ開始成功: ${result.jobId}`);
+
       return res.json({
         success: true,
         message: "Thumbnail generation started (MediaConvert)",
@@ -644,9 +651,11 @@ app.post("/photos/generate-thumbnail", async function (req, res) {
         thumbnailS3Key: result.thumbnailKey,
         photoId: photoId,
         method: "mediaconvert",
+        method: "mediaconvert",
       });
     } catch (mcError) {
       // MediaConvert失敗時はSVGプレースホルダー生成にフォールバック
+      console.error("MediaConvert失敗、SVGフォールバックに移行:", mcError);
       console.error("MediaConvert失敗、SVGフォールバックに移行:", mcError);
 
       const thumbnailS3Key = `thumbnails/${photoId}_thumbnail.svg`;
@@ -679,11 +688,14 @@ app.post("/photos/generate-thumbnail", async function (req, res) {
 
       console.log(`✅ SVGプレースホルダー生成完了: ${thumbnailS3Key}`);
 
+      console.log(`✅ SVGプレースホルダー生成完了: ${thumbnailS3Key}`);
+
       return res.json({
         success: true,
         message: "Thumbnail generated successfully (fallback SVG)",
         thumbnailS3Key: thumbnailS3Key,
         photoId: photoId,
+        method: "svg_fallback",
         method: "svg_fallback",
       });
     }
@@ -697,8 +709,22 @@ app.post("/photos/generate-thumbnail", async function (req, res) {
 });
 
 // ✅ 大幅改善版：実際のサムネイル生成関数
+// ✅ 大幅改善版：実際のサムネイル生成関数
 async function generateVideoThumbnail(videoS3Key, photoId) {
   try {
+    console.log(`🔧 MediaConvert設定開始...`);
+
+    // MediaConvertクライアントを初期化
+    const client = await initializeMediaConvertClient();
+
+    // MediaConvertロールARNを確認
+    const roleArn = process.env.MEDIACONVERT_ROLE_ARN;
+    if (!roleArn) {
+      throw new Error("MEDIACONVERT_ROLE_ARN environment variable not set");
+    }
+
+    console.log(`🔑 MediaConvert Role ARN: ${roleArn}`);
+
     console.log(`🔧 MediaConvert設定開始...`);
 
     // MediaConvertクライアントを初期化
@@ -721,6 +747,7 @@ async function generateVideoThumbnail(videoS3Key, photoId) {
 
     const jobSettings = {
       Role: roleArn,
+      Role: roleArn,
       Settings: {
         Inputs: [
           {
@@ -729,6 +756,8 @@ async function generateVideoThumbnail(videoS3Key, photoId) {
               ColorSpace: "FOLLOW",
               Rotate: "AUTO",
             },
+            TimecodeSource: "ZEROBASED",
+            InputScanType: "AUTO",
             TimecodeSource: "ZEROBASED",
             InputScanType: "AUTO",
           },
@@ -747,10 +776,18 @@ async function generateVideoThumbnail(videoS3Key, photoId) {
                     },
                   },
                 },
+                DestinationSettings: {
+                  S3Settings: {
+                    AccessControl: {
+                      CannedAcl: "PUBLIC_READ",
+                    },
+                  },
+                },
               },
             },
             Outputs: [
               {
+                NameModifier: outputFileName,
                 NameModifier: outputFileName,
                 ContainerSettings: {
                   Container: "RAW",
@@ -768,6 +805,7 @@ async function generateVideoThumbnail(videoS3Key, photoId) {
                   Width: 800,
                   Height: 600,
                   RespondToAfd: "NONE",
+                  RespondToAfd: "NONE",
                   ScalingBehavior: "DEFAULT",
                   TimecodeInsertion: "DISABLED",
                   AntiAlias: "ENABLED",
@@ -780,6 +818,17 @@ async function generateVideoThumbnail(videoS3Key, photoId) {
         TimecodeConfig: {
           Source: "ZEROBASED",
         },
+        AdAvailOffset: 0,
+      },
+      BillingTagsSource: "JOB",
+      AccelerationSettings: {
+        Mode: "DISABLED",
+      },
+      StatusUpdateInterval: "SECONDS_60",
+      Priority: 0,
+    };
+
+    console.log(`🚀 MediaConvertジョブ作成中...`);
         AdAvailOffset: 0,
       },
       BillingTagsSource: "JOB",
@@ -805,19 +854,7 @@ async function generateVideoThumbnail(videoS3Key, photoId) {
       thumbnailKey: thumbnailKey,
     };
   } catch (error) {
-    console.error("❌ MediaConvert エラー詳細:", error);
-    
-    // エラーの詳細情報をログ出力
-    if (error.name) {
-      console.error(`エラー名: ${error.name}`);
-    }
-    if (error.message) {
-      console.error(`エラーメッセージ: ${error.message}`);
-    }
-    if (error.$metadata) {
-      console.error(`メタデータ:`, error.$metadata);
-    }
-    
+    console.error("❌ MediaConvert エラー:", error);
     throw error;
   }
 }
