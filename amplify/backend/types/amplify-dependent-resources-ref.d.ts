@@ -22,6 +22,7 @@ export type AmplifyDependentResourcesAttributes = {
       "Arn": "string",
       "LambdaExecutionRole": "string",
       "LambdaExecutionRoleArn": "string",
+      "MediaConvertRoleArn": "string",
       "Name": "string",
       "Region": "string"
     }
