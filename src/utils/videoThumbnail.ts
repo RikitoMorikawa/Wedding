@@ -10,7 +10,7 @@ export async function generateVideoThumbnail(videoFile: File, options: Thumbnail
   const {
     width = 400,
     height = 300,
-    timeOffset = 0.5, // ⭐ 修正1: 0.5秒に変更（真っ黒を回避）
+    timeOffset = 1, // ⭐ 修正1: 0.5秒に変更（真っ黒を回避）
     quality = 0.8,
   } = options;
 

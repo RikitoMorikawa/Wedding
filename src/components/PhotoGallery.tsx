@@ -227,7 +227,6 @@ const AlbumItem = memo(({ album, onClick, isOwner }: { album: Album; onClick: ()
     if (album.mainPhoto?.mediaType === "video") {
       // 1. thumbnailUrlを優先
       if (album.mainPhoto?.thumbnailUrl) {
-        console.log(`🖼️ 動画サムネイル表示: ${album.albumId}`);
         return album.mainPhoto.thumbnailUrl;
       }
       // 2. サムネイルがない場合はnull（プレースホルダー表示）
@@ -521,7 +520,6 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
                 // まず新しい形式（-thumbnail.jpg）を試行
                 const thumbResult = await getUrl({ key: thumbnailS3Key });
                 thumbnailUrl = thumbResult.url.toString();
-                console.log(`🖼️ 新形式サムネイル使用: ${album.albumId} -> ${thumbnailS3Key}`);
               } catch {
                 console.log(`⚠️ 新形式サムネイルなし: ${thumbnailS3Key}`);
 
@@ -588,8 +586,6 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
                   favoriteCount: favResult.results[album.albumId]?.favoriteCount || 0,
                   isFavorite: favResult.results[album.albumId]?.isFavorite || false,
                 }));
-
-                console.log(`✅ お気に入り情報取得完了: ${Object.keys(favResult.results).length}件`);
               }
             }
           }
@@ -600,11 +596,6 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
 
       setAlbums(albumsWithFavorites);
       console.log(`✅ ${albumsWithFavorites.length}個のアルバムを表示`);
-
-      // デバッグ: 動画サムネイルの状況をログ出力
-      const videoAlbums = albumsWithFavorites.filter((album) => album.mainPhoto?.mediaType === "video");
-      const videoWithThumbnails = videoAlbums.filter((album) => album.mainPhoto?.thumbnailUrl);
-      console.log(`📹 動画アルバム: ${videoAlbums.length}件、サムネイルあり: ${videoWithThumbnails.length}件`);
     } catch (error) {
       console.error("アルバム取得エラー:", error);
       setAlbums([]);
@@ -652,8 +643,6 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
 
         // ✅ Step 2: バッチAPIで最新のお気に入り情報を取得（バックグラウンド）
         if (userInfo?.passcode) {
-          console.log(`🔄 最新のお気に入り情報を取得中...`);
-
           try {
             const batchResponse = await fetch(`${API_BASE}/favorites/batch`, {
               method: "POST",
@@ -693,8 +682,6 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
                       : prevAlbum
                   )
                 );
-
-                console.log(`✅ 最新お気に入り情報更新完了`);
               } else {
                 console.warn("バッチAPI結果が空でした");
               }
@@ -747,8 +734,6 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
 
           if (batchResult.success && batchResult.results[targetId]) {
             const latestData = batchResult.results[targetId];
-
-            console.log(`📊 最新データ: count=${latestData.favoriteCount}, isFavorite=${latestData.isFavorite}`);
 
             // アルバム一覧を更新
             setAlbums((prevAlbums) =>
@@ -805,8 +790,6 @@ export default function PhotoGallery({ refreshTrigger, userInfo }: PhotoGalleryP
       const currentAlbum = albums.find((album) => album.albumId === targetId);
       const currentStatus = currentAlbum?.isFavorite || false;
       const action = currentStatus ? "remove" : "add";
-
-      console.log(`🎯 お気に入り${action}: ${targetId.substring(0, 8)}... (現在の状態: ${currentStatus})`);
 
       try {
         // ✅ Step 1: お気に入り追加/削除API呼び出し

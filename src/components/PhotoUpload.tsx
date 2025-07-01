@@ -278,10 +278,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
         throw new Error(`${failedUploads.length}個のファイルのアップロードに失敗しました`);
       }
 
-      console.log(`✅ 全${successfulUploads.length}ファイルのS3アップロード完了`);
-
       // Step 3: 1回のAPIで全メタデータを保存
-      console.log("🔄 バッチでメタデータ保存中...");
       const saveResponse = await fetch(`${API_BASE}/photos/batch-save-album`, {
         method: "POST",
         headers: {
@@ -303,8 +300,6 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
       if (!saveResult.success) {
         throw new Error(saveResult.message || "Failed to save album metadata");
       }
-
-      console.log(`✅ アルバム保存完了: ${saveResult.totalFiles}ファイル、${saveResult.batches}バッチ`);
 
       // ✅ Step 4: 動画のサムネイル生成をトリガー（ここに移動）
       const videoFiles = successfulUploads.filter((result) => result.mediaType === "video");
@@ -379,7 +374,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
             // ⭐ 修正: サムネイル生成を関数化してPromiseで返す
             const generateThumbnailWithFallback = async (): Promise<Blob> => {
               // 複数タイムスタンプでの試行
-              const timeOffsets = [0.5, 1.0, 2.0, 0]; // 試行順序
+              const timeOffsets = [1.0, 2.0, 0]; // 試行順序
 
               for (const timeOffset of timeOffsets) {
                 try {
