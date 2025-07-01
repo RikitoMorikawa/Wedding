@@ -93,6 +93,161 @@ app.use(function (req, res, next) {
   next();
 });
 
+// ✅ 新規追加：MediaConvert環境確認エンドポイント
+app.get("/debug/mediaconvert-env", async function (req, res) {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "*");
+
+  try {
+    console.log("🔍 MediaConvert環境確認開始");
+
+    const envInfo = {
+      AWS_REGION: process.env.AWS_REGION,
+      TABLE_REGION: process.env.TABLE_REGION,
+      MEDIACONVERT_ROLE_ARN: process.env.MEDIACONVERT_ROLE_ARN,
+      STORAGE_WEDDINGPHOTOS_BUCKETNAME: process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME,
+    };
+
+    console.log("📊 環境変数:", envInfo);
+
+    // MediaConvertエンドポイント取得テスト
+    let endpointTest = null;
+    try {
+      const endpoint = await getMediaConvertEndpoint();
+      endpointTest = { success: true, endpoint };
+      console.log("✅ エンドポイント取得成功:", endpoint);
+    } catch (error) {
+      endpointTest = { success: false, error: error.message };
+      console.error("❌ エンドポイント取得失敗:", error);
+    }
+
+    // MediaConvertクライアント初期化テスト
+    let clientTest = null;
+    try {
+      const client = await initializeMediaConvertClient();
+      clientTest = { success: true, initialized: !!client };
+      console.log("✅ クライアント初期化成功");
+    } catch (error) {
+      clientTest = { success: false, error: error.message };
+      console.error("❌ クライアント初期化失敗:", error);
+    }
+
+    res.json({
+      success: true,
+      environment: envInfo,
+      endpointTest,
+      clientTest,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("❌ MediaConvert環境確認エラー:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// ✅ 新規追加：MediaConvert簡易テストエンドポイント
+app.post("/debug/mediaconvert-test", async function (req, res) {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "*");
+
+  try {
+    const { testVideoS3Key } = req.body;
+
+    if (!testVideoS3Key) {
+      return res.status(400).json({
+        success: false,
+        message: "testVideoS3Key is required",
+      });
+    }
+
+    console.log(`🧪 MediaConvertテスト開始: ${testVideoS3Key}`);
+
+    // 環境変数確認
+    const roleArn = process.env.MEDIACONVERT_ROLE_ARN;
+    if (!roleArn) {
+      throw new Error("MEDIACONVERT_ROLE_ARN not set");
+    }
+
+    // クライアント初期化
+    const client = await initializeMediaConvertClient();
+
+    // テスト用ジョブ設定（最小構成）
+    const testJobSettings = {
+      Role: roleArn,
+      Settings: {
+        Inputs: [
+          {
+            FileInput: `s3://${process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME}/public/${testVideoS3Key}`,
+            VideoSelector: {
+              ColorSpace: "FOLLOW",
+            },
+          },
+        ],
+        OutputGroups: [
+          {
+            Name: "Test Thumbnail",
+            OutputGroupSettings: {
+              Type: "FILE_GROUP_SETTINGS",
+              FileGroupSettings: {
+                Destination: `s3://${process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME}/public/test-thumbnails/`,
+              },
+            },
+            Outputs: [
+              {
+                NameModifier: "test_thumb",
+                ContainerSettings: {
+                  Container: "RAW",
+                },
+                VideoDescription: {
+                  CodecSettings: {
+                    Codec: "FRAME_CAPTURE",
+                    FrameCaptureSettings: {
+                      FramerateNumerator: 1,
+                      FramerateDenominator: 1,
+                      MaxCaptures: 1,
+                      Quality: 80,
+                    },
+                  },
+                  Width: 400,
+                  Height: 300,
+                },
+              },
+            ],
+          },
+        ],
+        TimecodeConfig: {
+          Source: "ZEROBASED",
+        },
+      },
+    };
+
+    console.log("🚀 テストジョブ作成中...");
+
+    const command = new CreateJobCommand(testJobSettings);
+    const response = await client.send(command);
+
+    console.log(`✅ テストジョブ作成成功: ${response.Job.Id}`);
+
+    res.json({
+      success: true,
+      message: "MediaConvert test job created successfully",
+      jobId: response.Job.Id,
+      status: response.Job.Status,
+      testVideoS3Key,
+    });
+  } catch (error) {
+    console.error("❌ MediaConvertテストエラー:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      details: error.stack,
+    });
+  }
+});
+
 /**********************
  * ユーザー関連API *
  **********************/
