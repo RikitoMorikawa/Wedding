@@ -216,7 +216,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
       // Step 2: 全ファイルをS3に並行アップロード
       const uploadPromises = selectedFiles.map(async (selectedFile, index) => {
         const uploadInfo = urlResult.uploadUrls[index];
-        const generatedPhotoId = uuidv4(); 
+        const generatedPhotoId = uuidv4();
 
         try {
           const response = await fetch(uploadInfo.uploadURL, {
@@ -293,8 +293,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
       if (videoFiles.length > 0) {
         console.log(`🎬 ${videoFiles.length}個の動画のサムネイル生成を開始...`);
 
-        // 動画サムネイル生成を並行実行（非同期、エラーでも継続）
-        const thumbnailPromises = videoFiles.map(async (videoFile) => {
+        for (const videoFile of videoFiles) {
           try {
             const thumbnailResponse = await fetch(`${API_BASE}/photos/generate-thumbnail`, {
               method: "POST",
@@ -312,27 +311,15 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
 
             if (thumbnailResult.success) {
               console.log(`✅ サムネイル生成完了: ${videoFile.fileName}`);
-              return { success: true, photoId: videoFile.photoId };
             } else {
               console.warn(`⚠️ サムネイル生成失敗: ${videoFile.fileName}`, thumbnailResult.message);
-              return { success: false, photoId: videoFile.photoId, error: thumbnailResult.message };
             }
           } catch (error) {
             console.error(`❌ サムネイル生成エラー: ${videoFile.fileName}`, error);
-            return { success: false, photoId: videoFile.photoId, error };
           }
-        });
+        }
 
-        // サムネイル生成は非同期実行（アップロード完了をブロックしない）
-        Promise.allSettled(thumbnailPromises).then((thumbnailResults) => {
-          const successfulThumbnails = thumbnailResults.filter((result) => result.status === "fulfilled" && result.value.success).length;
-
-          console.log(`🎨 サムネイル生成結果: ${successfulThumbnails}/${videoFiles.length}個成功`);
-
-          if (successfulThumbnails < videoFiles.length) {
-            console.warn(`⚠️ 一部のサムネイル生成に失敗しましたが、動画はアップロードされました`);
-          }
-        });
+        console.log(`🎨 サムネイル生成処理完了（最大${videoFiles.length}件）`);
       }
 
       // 完了処理（サムネイル生成の完了を待たずに実行）
