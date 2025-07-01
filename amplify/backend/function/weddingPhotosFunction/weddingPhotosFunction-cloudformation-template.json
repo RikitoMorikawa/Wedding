@@ -68,6 +68,77 @@
     }
   },
   "Resources": {
+    "MediaConvertRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": {
+          "Fn::If": [
+            "ShouldNotCreateEnvResources",
+            "weddingMediaConvertRole",
+            {
+              "Fn::Join": [
+                "",
+                [
+                  "weddingMediaConvertRole",
+                  "-",
+                  {
+                    "Ref": "env"
+                  }
+                ]
+              ]
+            }
+          ]
+        },
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "mediaconvert.amazonaws.com"
+                ]
+              },
+              "Action": [
+                "sts:AssumeRole"
+              ]
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "MediaConvertS3Access",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetObject",
+                    "s3:PutObject",
+                    "s3:DeleteObject"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::Join": [
+                        "",
+                        [
+                          "arn:aws:s3:::",
+                          {
+                            "Ref": "storageweddingPhotosBucketName"
+                          },
+                          "/*"
+                        ]
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
     "LambdaFunction": {
       "Type": "AWS::Lambda::Function",
       "Metadata": {
@@ -110,6 +181,9 @@
             "REGION": {
               "Ref": "AWS::Region"
             },
+            "TABLE_REGION": {
+              "Ref": "AWS::Region"
+            },
             "STORAGE_WEDDINGPHOTOS_BUCKETNAME": {
               "Ref": "storageweddingPhotosBucketName"
             },
@@ -139,6 +213,12 @@
             },
             "STORAGE_FAVORITES_STREAMARN": {
               "Ref": "storageFavoritesStreamArn"
+            },
+            "MEDIACONVERT_ROLE_ARN": {
+              "Fn::GetAtt": [
+                "MediaConvertRole",
+                "Arn"
+              ]
             }
           }
         },
@@ -399,6 +479,28 @@
                   ]
                 }
               ]
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "mediaconvert:CreateJob",
+                "mediaconvert:GetJob",
+                "mediaconvert:ListJobs",
+                "mediaconvert:DescribeEndpoints"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "iam:PassRole"
+              ],
+              "Resource": {
+                "Fn::GetAtt": [
+                  "MediaConvertRole",
+                  "Arn"
+                ]
+              }
             }
           ]
         }
@@ -433,6 +535,14 @@
       "Value": {
         "Fn::GetAtt": [
           "LambdaExecutionRole",
+          "Arn"
+        ]
+      }
+    },
+    "MediaConvertRoleArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "MediaConvertRole",
           "Arn"
         ]
       }
