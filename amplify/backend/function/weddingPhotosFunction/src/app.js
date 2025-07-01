@@ -5,7 +5,16 @@ const { TransactWriteCommand } = require("@aws-sdk/lib-dynamodb");
 
 // ✅ 必要なimport（S3とDynamoDB両方）
 const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
-const { DynamoDBDocumentClient, ScanCommand, QueryCommand, GetCommand, PutCommand, DeleteCommand, BatchGetCommand } = require("@aws-sdk/lib-dynamodb");
+const {
+  DynamoDBDocumentClient,
+  ScanCommand,
+  QueryCommand,
+  GetCommand,
+  PutCommand,
+  UpdateCommand,
+  DeleteCommand,
+  BatchGetCommand,
+} = require("@aws-sdk/lib-dynamodb");
 
 // ✅ S3関連のimport（アップロード機能に必要）
 const { S3Client, GetObjectCommand } = require("@aws-sdk/client-s3");
@@ -149,12 +158,12 @@ app.post("/photos/batch-upload-urls", async function (req, res) {
     }
 
     // ✅ メディアタイプ別ファイル数制限チェック
-    const photoFiles = files.filter(file => {
+    const photoFiles = files.filter((file) => {
       const allowedPhotoTypes = ["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"];
       return allowedPhotoTypes.includes(file.fileType);
     });
 
-    const videoFiles = files.filter(file => {
+    const videoFiles = files.filter((file) => {
       const allowedVideoTypes = ["video/mp4", "video/quicktime", "video/x-msvideo", "video/webm"];
       return allowedVideoTypes.includes(file.fileType);
     });
@@ -190,7 +199,7 @@ app.post("/photos/batch-upload-urls", async function (req, res) {
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      
+
       // ファイルタイプ検証
       if (!allAllowedTypes.includes(file.fileType)) {
         return res.status(400).json({
@@ -208,11 +217,14 @@ app.post("/photos/batch-upload-urls", async function (req, res) {
       const mediaType = isVideo ? "動画" : "写真";
       const maxSizeText = isVideo ? "300MB" : "50MB"; // 300MBに更新
       const description = isVideo ? "（約3分対応）" : "（プロ撮影対応）"; // 説明更新
-      
+
       if (file.size > maxSize) {
         return res.status(400).json({
           success: false,
-          message: `${mediaType}ファイル「${file.fileName}」のサイズが制限を超えています。制限: ${maxSizeText}${description}、現在: ${(file.size / (1024 * 1024)).toFixed(1)}MB`,
+          message: `${mediaType}ファイル「${file.fileName}」のサイズが制限を超えています。制限: ${maxSizeText}${description}、現在: ${(
+            file.size /
+            (1024 * 1024)
+          ).toFixed(1)}MB`,
           errorCode: "FILE_SIZE_EXCEEDED",
           fileName: file.fileName,
           maxSizeMB: Math.floor(maxSize / (1024 * 1024)),
@@ -227,7 +239,7 @@ app.post("/photos/batch-upload-urls", async function (req, res) {
       // S3キー生成
       const timestamp = Date.now();
       const s3Key = `${isVideo ? "videos" : "photos"}/${timestamp}_${i}_${file.fileName}`;
-      
+
       const s3Params = {
         Bucket: process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME,
         Key: `public/${s3Key}`,
@@ -264,7 +276,6 @@ app.post("/photos/batch-upload-urls", async function (req, res) {
         // maxTotalSizeMB削除 - 合計制限なし
       },
     });
-
   } catch (error) {
     console.error("Error creating batch upload URLs:", error);
     res.status(500).json({
@@ -281,14 +292,14 @@ app.post("/photos/batch-save-album", async function (req, res) {
   res.header("Access-Control-Allow-Headers", "*");
 
   try {
-    const { 
-      albumId, 
-      uploadedBy, 
-      uploaderName, 
-      caption, 
-      uploadedAt, 
+    const {
+      albumId,
+      uploadedBy,
+      uploaderName,
+      caption,
+      uploadedAt,
       files, // [{ photoId, s3Key, mediaType, fileType, fileName, size, fileIndex }]
-      passcode 
+      passcode,
     } = req.body;
 
     // バリデーション
@@ -309,8 +320,8 @@ app.post("/photos/batch-save-album", async function (req, res) {
     }
 
     // ✅ サーバーサイドでも制限を再チェック（更新された設定）
-    const photoFiles = files.filter(file => file.mediaType === "photo");
-    const videoFiles = files.filter(file => file.mediaType === "video");
+    const photoFiles = files.filter((file) => file.mediaType === "photo");
+    const videoFiles = files.filter((file) => file.mediaType === "video");
 
     if (photoFiles.length > MAX_PHOTO_FILES) {
       return res.status(400).json({
@@ -335,7 +346,7 @@ app.post("/photos/batch-save-album", async function (req, res) {
     // ユーザー存在確認
     const userCheck = new GetCommand({
       TableName: process.env.STORAGE_WEDDINGUSERS_NAME,
-      Key: { passcode: passcode }
+      Key: { passcode: passcode },
     });
 
     const userResult = await docClient.send(userCheck);
@@ -351,7 +362,7 @@ app.post("/photos/batch-save-album", async function (req, res) {
     // 10個ずつのバッチに分割
     const BATCH_SIZE = 10;
     const batches = [];
-    
+
     for (let i = 0; i < files.length; i += BATCH_SIZE) {
       batches.push(files.slice(i, i + BATCH_SIZE));
     }
@@ -362,11 +373,11 @@ app.post("/photos/batch-save-album", async function (req, res) {
       // バッチごとにトランザクション実行
       for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
         const batch = batches[batchIndex];
-        
+
         // トランザクションアイテム作成
         const transactItems = batch.map((file, batchFileIndex) => {
           const globalIndex = batchIndex * BATCH_SIZE + batchFileIndex;
-          
+
           return {
             Put: {
               TableName: process.env.STORAGE_PHOTOS_NAME,
@@ -391,33 +402,33 @@ app.post("/photos/batch-save-album", async function (req, res) {
                 createdAt: new Date().toISOString(),
               },
               // 条件付き書き込み（同じphotoIdが存在しない場合のみ）
-              ConditionExpression: "attribute_not_exists(photoId)"
-            }
+              ConditionExpression: "attribute_not_exists(photoId)",
+            },
           };
         });
 
         // トランザクション実行
         const transactCommand = new TransactWriteCommand({
-          TransactItems: transactItems
+          TransactItems: transactItems,
         });
 
         await docClient.send(transactCommand);
-        
+
         // 成功したファイルを記録
-        batch.forEach(file => {
+        batch.forEach((file) => {
           savedFiles.push({
             photoId: file.photoId,
             s3Key: file.s3Key,
             fileName: file.fileName,
-            mediaType: file.mediaType
+            mediaType: file.mediaType,
           });
         });
 
         console.log(`✅ Batch ${batchIndex + 1}/${batches.length} saved successfully (${batch.length} files)`);
-        
+
         // バッチ間で少し待機（DynamoDB負荷軽減）
         if (batchIndex < batches.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 100));
+          await new Promise((resolve) => setTimeout(resolve, 100));
         }
       }
 
@@ -438,17 +449,18 @@ app.post("/photos/batch-save-album", async function (req, res) {
           currentVideos: videoFiles.length,
         },
       });
-
     } catch (transactionError) {
       console.error("Transaction failed:", transactionError);
-      
+
       // トランザクション失敗時のS3クリーンアップを並行実行
       const cleanupPromises = savedFiles.map(async (file) => {
         try {
-          await s3.deleteObject({
-            Bucket: process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME,
-            Key: `public/${file.s3Key}`
-          }).promise();
+          await s3
+            .deleteObject({
+              Bucket: process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME,
+              Key: `public/${file.s3Key}`,
+            })
+            .promise();
           console.log(`🧹 Cleaned up S3 file: ${file.s3Key}`);
         } catch (cleanupError) {
           console.error(`❌ Failed to cleanup S3 file ${file.s3Key}:`, cleanupError);
@@ -459,14 +471,14 @@ app.post("/photos/batch-save-album", async function (req, res) {
       Promise.all(cleanupPromises).catch(console.error);
 
       // エラーレスポンス
-      if (transactionError.name === 'ConditionalCheckFailedException') {
+      if (transactionError.name === "ConditionalCheckFailedException") {
         res.status(409).json({
           success: false,
           message: "一部のファイルが既に存在します。しばらく待ってから再試行してください。",
           errorCode: "DUPLICATE_FILES",
           cleanedUp: savedFiles.length,
         });
-      } else if (transactionError.name === 'ProvisionedThroughputExceededException') {
+      } else if (transactionError.name === "ProvisionedThroughputExceededException") {
         res.status(503).json({
           success: false,
           message: "データベースが一時的に混雑しています。少し待ってから再試行してください。",
@@ -483,7 +495,6 @@ app.post("/photos/batch-save-album", async function (req, res) {
         });
       }
     }
-
   } catch (error) {
     console.error("Error in batch save album:", error);
     res.status(500).json({
@@ -493,10 +504,9 @@ app.post("/photos/batch-save-album", async function (req, res) {
       error: error.message,
     });
   }
-  
 });
 
-// ✅ 既存のバッチURL生成処理の後に、以下を追加
+// ✅ 修正版：generate-thumbnailエンドポイント
 app.post("/photos/generate-thumbnail", async function (req, res) {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Headers", "*");
@@ -507,80 +517,151 @@ app.post("/photos/generate-thumbnail", async function (req, res) {
     if (!photoId || !videoS3Key) {
       return res.status(400).json({
         success: false,
-        message: "photoId and videoS3Key are required"
+        message: "photoId and videoS3Key are required",
       });
     }
 
-    // 簡易版: Canvas APIを使ったサーバーサイド処理（Node.js用）
+    console.log(`🎬 サムネイル生成開始: photoId=${photoId}, videoS3Key=${videoS3Key}`);
+
     const thumbnailS3Key = `thumbnails/${photoId}_thumbnail.jpg`;
-    
-    // Step 1: 処理状態を更新
-    await docClient.send(new PutCommand({
-      TableName: process.env.STORAGE_PHOTOS_NAME,
-      Key: { photoId },
-      UpdateExpression: 'SET processingStatus = :status, thumbnailS3Key = :thumbnailKey',
-      ExpressionAttributeValues: { 
-        ':status': 'processing',
-        ':thumbnailKey': thumbnailS3Key
-      }
-    }));
 
-    // Step 2: 簡易的なサムネイル生成（実際の動画処理は省略し、プレースホルダー画像生成）
-    const placeholderImageBuffer = await generatePlaceholderThumbnail(photoId);
-    
-    // Step 3: S3にアップロード
-    await s3.upload({
-      Bucket: process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME,
-      Key: thumbnailS3Key,
-      Body: placeholderImageBuffer,
-      ContentType: 'image/jpeg'
-    }).promise();
+    // ✅ Step 1: 処理状態を更新（UpdateCommandに修正）
+    try {
+      const updateCommand = new UpdateCommand({
+        TableName: process.env.STORAGE_PHOTOS_NAME,
+        Key: { photoId },
+        UpdateExpression: "SET processingStatus = :status, thumbnailS3Key = :thumbnailKey",
+        ExpressionAttributeValues: {
+          ":status": "processing",
+          ":thumbnailKey": thumbnailS3Key,
+        },
+      });
 
-    // Step 4: 完了状態に更新
-    await docClient.send(new PutCommand({
-      TableName: process.env.STORAGE_PHOTOS_NAME,
-      Key: { photoId },
-      UpdateExpression: 'SET processingStatus = :status',
-      ExpressionAttributeValues: { ':status': 'ready' }
-    }));
+      await docClient.send(updateCommand);
+      console.log(`✅ 処理状態を'processing'に更新: ${photoId}`);
+    } catch (updateError) {
+      console.error(`❌ 処理状態更新エラー:`, updateError);
+      return res.status(500).json({
+        success: false,
+        message: `Failed to update processing status: ${updateError.message}`,
+      });
+    }
+
+    // ✅ Step 2: 簡易的なサムネイル生成（SVG版）
+    let placeholderImageBuffer;
+    try {
+      placeholderImageBuffer = await generatePlaceholderThumbnail(photoId);
+      console.log(`✅ プレースホルダー画像生成完了: ${placeholderImageBuffer.length}バイト`);
+    } catch (imageError) {
+      console.error(`❌ 画像生成エラー:`, imageError);
+      return res.status(500).json({
+        success: false,
+        message: `Failed to generate thumbnail: ${imageError.message}`,
+      });
+    }
+
+    // ✅ Step 3: S3にアップロード
+    try {
+      const uploadResult = await s3
+        .upload({
+          Bucket: process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME,
+          Key: `public/${thumbnailS3Key}`, // ← publicプレフィックス追加
+          Body: placeholderImageBuffer,
+          ContentType: "image/svg+xml", // ← SVG用のContent-Type
+        })
+        .promise();
+
+      console.log(`✅ S3アップロード完了: ${uploadResult.Location}`);
+    } catch (s3Error) {
+      console.error(`❌ S3アップロードエラー:`, s3Error);
+      return res.status(500).json({
+        success: false,
+        message: `Failed to upload to S3: ${s3Error.message}`,
+      });
+    }
+
+    // ✅ Step 4: 完了状態に更新（UpdateCommandに修正）
+    try {
+      const completeCommand = new UpdateCommand({
+        TableName: process.env.STORAGE_PHOTOS_NAME,
+        Key: { photoId },
+        UpdateExpression: "SET processingStatus = :status",
+        ExpressionAttributeValues: { ":status": "ready" },
+      });
+
+      await docClient.send(completeCommand);
+      console.log(`✅ 処理状態を'ready'に更新: ${photoId}`);
+    } catch (completeError) {
+      console.error(`❌ 完了状態更新エラー:`, completeError);
+      return res.status(500).json({
+        success: false,
+        message: `Failed to update completion status: ${completeError.message}`,
+      });
+    }
 
     res.json({
       success: true,
       message: "Thumbnail generated successfully",
-      thumbnailS3Key: thumbnailS3Key
+      thumbnailS3Key: thumbnailS3Key,
+      photoId: photoId,
     });
-
   } catch (error) {
-    console.error("Thumbnail generation error:", error);
+    console.error("❌ サムネイル生成の全般的なエラー:", error);
     res.status(500).json({
       success: false,
-      message: error.message
+      message: error.message || "Internal server error",
     });
   }
 });
 
+// ✅ シンプルなSVGプレースホルダー生成関数（Canvas不要）
+async function generatePlaceholderThumbnail(photoId) {
+  try {
+    // シンプルなSVGプレースホルダー
+    const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg width="300" height="300" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#667eea;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#764ba2;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect width="300" height="300" fill="url(#grad)" />
+  <circle cx="150" cy="150" r="40" fill="rgba(255,255,255,0.9)" />
+  <polygon points="135,135 135,165 165,150" fill="#667eea" />
+  <text x="150" y="200" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="16" font-family="Arial">VIDEO</text>
+  <text x="150" y="220" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="12" font-family="Arial">${photoId.substring(0, 8)}</text>
+</svg>`;
+
+    return Buffer.from(svg, "utf8");
+  } catch (error) {
+    console.error("SVG generation error:", error);
+    throw error;
+  }
+}
+
 // ✅ プレースホルダー画像生成関数（簡易版）
 async function generatePlaceholderThumbnail(photoId) {
   // Canvas APIを使った簡易サムネイル生成
-  const Canvas = require('canvas');
+  const Canvas = require("canvas");
   const canvas = Canvas.createCanvas(300, 300);
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas.getContext("2d");
 
   // グラデーション背景
   const gradient = ctx.createLinearGradient(0, 0, 300, 300);
-  gradient.addColorStop(0, '#667eea');
-  gradient.addColorStop(1, '#764ba2');
+  gradient.addColorStop(0, "#667eea");
+  gradient.addColorStop(1, "#764ba2");
   ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, 300, 300);
 
   // 再生ボタン
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+  ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
   ctx.beginPath();
   ctx.arc(150, 150, 40, 0, Math.PI * 2);
   ctx.fill();
 
   // 三角形（再生アイコン）
-  ctx.fillStyle = '#667eea';
+  ctx.fillStyle = "#667eea";
   ctx.beginPath();
   ctx.moveTo(135, 135);
   ctx.lineTo(135, 165);
@@ -589,16 +670,16 @@ async function generatePlaceholderThumbnail(photoId) {
   ctx.fill();
 
   // テキスト
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
-  ctx.font = '16px Arial';
-  ctx.textAlign = 'center';
-  ctx.fillText('VIDEO', 150, 200);
-  
+  ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
+  ctx.font = "16px Arial";
+  ctx.textAlign = "center";
+  ctx.fillText("VIDEO", 150, 200);
+
   // ID表示（識別用）
-  ctx.font = '12px Arial';
+  ctx.font = "12px Arial";
   ctx.fillText(photoId.substring(0, 8), 150, 220);
 
-  return canvas.toBuffer('image/jpeg', { quality: 0.8 });
+  return canvas.toBuffer("image/jpeg", { quality: 0.8 });
 }
 
 // ✅ S3ファイル削除用ヘルパーAPI（緊急時用）
@@ -620,7 +701,7 @@ app.delete("/photos/cleanup-s3/:s3Key", async function (req, res) {
     // ユーザー確認
     const userCheck = new GetCommand({
       TableName: process.env.STORAGE_WEDDINGUSERS_NAME,
-      Key: { passcode: passcode }
+      Key: { passcode: passcode },
     });
 
     const userResult = await docClient.send(userCheck);
@@ -632,17 +713,18 @@ app.delete("/photos/cleanup-s3/:s3Key", async function (req, res) {
     }
 
     // S3ファイル削除
-    await s3.deleteObject({
-      Bucket: process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME,
-      Key: `public/${s3Key}`
-    }).promise();
+    await s3
+      .deleteObject({
+        Bucket: process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME,
+        Key: `public/${s3Key}`,
+      })
+      .promise();
 
     res.json({
       success: true,
       message: "S3 file deleted successfully",
       s3Key: s3Key,
     });
-
   } catch (error) {
     console.error("Error cleaning up S3:", error);
     res.status(500).json({
