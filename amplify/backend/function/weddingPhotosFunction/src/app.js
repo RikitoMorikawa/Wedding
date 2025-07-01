@@ -2,7 +2,7 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const awsServerlessExpressMiddleware = require("aws-serverless-express/middleware");
 const { TransactWriteCommand } = require("@aws-sdk/lib-dynamodb");
-const { MediaConvertClient, CreateJobCommand, DescribeEndpointsCommand } = require("@aws-sdk/client-mediaconvert");
+const { MediaConvertClient, CreateJobCommand, DescribeEndpointsCommand, GetJobCommand } = require("@aws-sdk/client-mediaconvert");
 
 // ✅ 必要なimport（S3とDynamoDB両方）
 const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
@@ -30,6 +30,57 @@ const docClient = DynamoDBDocumentClient.from(client);
 const s3Client = new S3Client({ region: process.env.TABLE_REGION });
 const s3 = new AWS.S3(); // ✅ アップロード用S3クライアント
 
+// ✅ MediaConvert クライアントの初期化（改善版）
+let mediaConvertClient = null;
+let mediaConvertEndpoint = null;
+
+// MediaConvertエンドポイントを取得する関数
+async function getMediaConvertEndpoint() {
+  if (mediaConvertEndpoint) {
+    return mediaConvertEndpoint;
+  }
+
+  try {
+    const tempClient = new MediaConvertClient({
+      region: process.env.TABLE_REGION || process.env.AWS_REGION,
+    });
+
+    const command = new DescribeEndpointsCommand({});
+    const response = await tempClient.send(command);
+
+    if (response.Endpoints && response.Endpoints.length > 0) {
+      mediaConvertEndpoint = response.Endpoints[0].Url;
+      console.log(`✅ MediaConvert endpoint取得: ${mediaConvertEndpoint}`);
+      return mediaConvertEndpoint;
+    } else {
+      throw new Error("MediaConvert endpoints not found");
+    }
+  } catch (error) {
+    console.error("❌ MediaConvert endpoint取得エラー:", error);
+    throw error;
+  }
+}
+
+// MediaConvertクライアントを初期化する関数
+async function initializeMediaConvertClient() {
+  if (mediaConvertClient) {
+    return mediaConvertClient;
+  }
+
+  try {
+    const endpoint = await getMediaConvertEndpoint();
+    mediaConvertClient = new MediaConvertClient({
+      region: process.env.TABLE_REGION || process.env.AWS_REGION,
+      endpoint: endpoint,
+    });
+    console.log(`✅ MediaConvertクライアント初期化完了`);
+    return mediaConvertClient;
+  } catch (error) {
+    console.error("❌ MediaConvertクライアント初期化エラー:", error);
+    throw error;
+  }
+}
+
 const app = express();
 app.use(bodyParser.json());
 app.use(awsServerlessExpressMiddleware.eventContext());
@@ -40,6 +91,161 @@ app.use(function (req, res, next) {
   res.header("Access-Control-Allow-Headers", "*");
   res.header("Access-Control-Allow-Methods", "*");
   next();
+});
+
+// ✅ 新規追加：MediaConvert環境確認エンドポイント
+app.get("/debug/mediaconvert-env", async function (req, res) {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "*");
+
+  try {
+    console.log("🔍 MediaConvert環境確認開始");
+
+    const envInfo = {
+      AWS_REGION: process.env.AWS_REGION,
+      TABLE_REGION: process.env.TABLE_REGION,
+      MEDIACONVERT_ROLE_ARN: process.env.MEDIACONVERT_ROLE_ARN,
+      STORAGE_WEDDINGPHOTOS_BUCKETNAME: process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME,
+    };
+
+    console.log("📊 環境変数:", envInfo);
+
+    // MediaConvertエンドポイント取得テスト
+    let endpointTest = null;
+    try {
+      const endpoint = await getMediaConvertEndpoint();
+      endpointTest = { success: true, endpoint };
+      console.log("✅ エンドポイント取得成功:", endpoint);
+    } catch (error) {
+      endpointTest = { success: false, error: error.message };
+      console.error("❌ エンドポイント取得失敗:", error);
+    }
+
+    // MediaConvertクライアント初期化テスト
+    let clientTest = null;
+    try {
+      const client = await initializeMediaConvertClient();
+      clientTest = { success: true, initialized: !!client };
+      console.log("✅ クライアント初期化成功");
+    } catch (error) {
+      clientTest = { success: false, error: error.message };
+      console.error("❌ クライアント初期化失敗:", error);
+    }
+
+    res.json({
+      success: true,
+      environment: envInfo,
+      endpointTest,
+      clientTest,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("❌ MediaConvert環境確認エラー:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// ✅ 新規追加：MediaConvert簡易テストエンドポイント
+app.post("/debug/mediaconvert-test", async function (req, res) {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "*");
+
+  try {
+    const { testVideoS3Key } = req.body;
+
+    if (!testVideoS3Key) {
+      return res.status(400).json({
+        success: false,
+        message: "testVideoS3Key is required",
+      });
+    }
+
+    console.log(`🧪 MediaConvertテスト開始: ${testVideoS3Key}`);
+
+    // 環境変数確認
+    const roleArn = process.env.MEDIACONVERT_ROLE_ARN;
+    if (!roleArn) {
+      throw new Error("MEDIACONVERT_ROLE_ARN not set");
+    }
+
+    // クライアント初期化
+    const client = await initializeMediaConvertClient();
+
+    // テスト用ジョブ設定（最小構成）
+    const testJobSettings = {
+      Role: roleArn,
+      Settings: {
+        Inputs: [
+          {
+            FileInput: `s3://${process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME}/public/${testVideoS3Key}`,
+            VideoSelector: {
+              ColorSpace: "FOLLOW",
+            },
+          },
+        ],
+        OutputGroups: [
+          {
+            Name: "Test Thumbnail",
+            OutputGroupSettings: {
+              Type: "FILE_GROUP_SETTINGS",
+              FileGroupSettings: {
+                Destination: `s3://${process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME}/public/test-thumbnails/`,
+              },
+            },
+            Outputs: [
+              {
+                NameModifier: "test_thumb",
+                ContainerSettings: {
+                  Container: "RAW",
+                },
+                VideoDescription: {
+                  CodecSettings: {
+                    Codec: "FRAME_CAPTURE",
+                    FrameCaptureSettings: {
+                      FramerateNumerator: 1,
+                      FramerateDenominator: 1,
+                      MaxCaptures: 1,
+                      Quality: 80,
+                    },
+                  },
+                  Width: 400,
+                  Height: 300,
+                },
+              },
+            ],
+          },
+        ],
+        TimecodeConfig: {
+          Source: "ZEROBASED",
+        },
+      },
+    };
+
+    console.log("🚀 テストジョブ作成中...");
+
+    const command = new CreateJobCommand(testJobSettings);
+    const response = await client.send(command);
+
+    console.log(`✅ テストジョブ作成成功: ${response.Job.Id}`);
+
+    res.json({
+      success: true,
+      message: "MediaConvert test job created successfully",
+      jobId: response.Job.Id,
+      status: response.Job.Status,
+      testVideoS3Key,
+    });
+  } catch (error) {
+    console.error("❌ MediaConvertテストエラー:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      details: error.stack,
+    });
+  }
 });
 
 /**********************
@@ -507,7 +713,7 @@ app.post("/photos/batch-save-album", async function (req, res) {
   }
 });
 
-// ✅ 修正版：generate-thumbnailエンドポイント
+// ✅ 大幅改善版：generate-thumbnailエンドポイント
 app.post("/photos/generate-thumbnail", async function (req, res) {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Headers", "*");
@@ -521,6 +727,8 @@ app.post("/photos/generate-thumbnail", async function (req, res) {
         message: "Missing required fields: photoId or videoS3Key",
       });
     }
+
+    console.log(`🎬 サムネイル生成開始: photoId=${photoId}, videoS3Key=${videoS3Key}`);
 
     // DynamoDBのテーブル名を取得
     const tableName = process.env.STORAGE_PHOTOS_NAME;
@@ -546,6 +754,7 @@ app.post("/photos/generate-thumbnail", async function (req, res) {
 
       if (scanResult.Items && scanResult.Items.length > 0) {
         existingPhoto = scanResult.Items[0];
+        console.log(`✅ 写真レコード発見: ${photoId}`);
       } else {
         return res.status(404).json({
           success: false,
@@ -562,6 +771,7 @@ app.post("/photos/generate-thumbnail", async function (req, res) {
 
     // MediaConvertでサムネイル生成を試みる
     try {
+      console.log(`🔄 MediaConvertでサムネイル生成を試行中...`);
       const result = await generateVideoThumbnail(videoS3Key, photoId);
 
       // DynamoDBのprocessingStatusを更新
@@ -580,16 +790,19 @@ app.post("/photos/generate-thumbnail", async function (req, res) {
 
       await docClient.send(putCommand);
 
+      console.log(`✅ MediaConvertジョブ開始成功: ${result.jobId}`);
+
       return res.json({
         success: true,
         message: "Thumbnail generation started (MediaConvert)",
         jobId: result.jobId,
         thumbnailS3Key: result.thumbnailKey,
         photoId: photoId,
+        method: "mediaconvert",
       });
     } catch (mcError) {
       // MediaConvert失敗時はSVGプレースホルダー生成にフォールバック
-      console.error("MediaConvert failed, falling back to SVG:", mcError);
+      console.error("MediaConvert失敗、SVGフォールバックに移行:", mcError);
 
       const thumbnailS3Key = `thumbnails/${photoId}_thumbnail.svg`;
       const placeholderImageBuffer = await generatePlaceholderThumbnail(photoId);
@@ -619,6 +832,8 @@ app.post("/photos/generate-thumbnail", async function (req, res) {
 
       await docClient.send(completePutCommand);
 
+      console.log(`✅ SVGプレースホルダー生成完了: ${thumbnailS3Key}`);
+
       return res.json({
         success: true,
         message: "Thumbnail generated successfully (fallback SVG)",
@@ -636,60 +851,31 @@ app.post("/photos/generate-thumbnail", async function (req, res) {
   }
 });
 
-// ✅ 修正版：MediaConvert クライアントの初期化
-let mediaConvertClient = null;
-
-// エンドポイント取得とクライアント初期化
-async function initializeMediaConvert() {
-  if (!mediaConvertClient) {
-    try {
-      console.log("🔧 MediaConvert エンドポイントを取得中...");
-      
-      // 一時的なクライアントでエンドポイントを取得
-      const tempClient = new MediaConvertClient({ 
-        region: process.env.TABLE_REGION || process.env.AWS_REGION || "ap-northeast-1"
-      });
-      
-      const { Endpoints } = await tempClient.send(new DescribeEndpointsCommand({}));
-      
-      if (!Endpoints || Endpoints.length === 0) {
-        throw new Error("MediaConvert endpoints not found");
-      }
-      
-      const endpoint = Endpoints[0].Url;
-      console.log(`✅ MediaConvert エンドポイント取得: ${endpoint}`);
-      
-      // 実際のクライアントを作成
-      mediaConvertClient = new MediaConvertClient({
-        region: process.env.TABLE_REGION || process.env.AWS_REGION || "ap-northeast-1",
-        endpoint: endpoint
-      });
-      
-      console.log("✅ MediaConvert クライアント初期化完了");
-    } catch (error) {
-      console.error("❌ MediaConvert 初期化エラー:", error);
-      throw error;
-    }
-  }
-  return mediaConvertClient;
-}
-
-// 実際のサムネイル生成関数
+// ✅ 大幅改善版：実際のサムネイル生成関数
 async function generateVideoThumbnail(videoS3Key, photoId) {
   try {
-    console.log(`🎬 MediaConvert サムネイル生成開始: ${videoS3Key}`);
-    
-    // クライアントを初期化
-    const client = await initializeMediaConvert();
-    
+    console.log(`🔧 MediaConvert設定開始...`);
+
+    // MediaConvertクライアントを初期化
+    const client = await initializeMediaConvertClient();
+
+    // MediaConvertロールARNを確認
+    const roleArn = process.env.MEDIACONVERT_ROLE_ARN;
+    if (!roleArn) {
+      throw new Error("MEDIACONVERT_ROLE_ARN environment variable not set");
+    }
+
+    console.log(`🔑 MediaConvert Role ARN: ${roleArn}`);
+
     const inputPath = `s3://${process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME}/public/${videoS3Key}`;
     const outputPath = `s3://${process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME}/public/thumbnails/`;
-    
+    const outputFileName = `${photoId}_thumbnail`;
+
     console.log(`📥 入力パス: ${inputPath}`);
-    console.log(`📤 出力パス: ${outputPath}`);
+    console.log(`📤 出力パス: ${outputPath}${outputFileName}`);
 
     const jobSettings = {
-      Role: process.env.MEDIACONVERT_ROLE_ARN,
+      Role: roleArn,
       Settings: {
         Inputs: [
           {
@@ -698,25 +884,29 @@ async function generateVideoThumbnail(videoS3Key, photoId) {
               ColorSpace: "FOLLOW",
               Rotate: "AUTO",
             },
-            AudioSelectors: {
-              "Audio Selector 1": {
-                DefaultSelection: "DEFAULT",
-              },
-            },
+            TimecodeSource: "ZEROBASED",
+            InputScanType: "AUTO",
           },
         ],
         OutputGroups: [
           {
-            Name: "Thumbnail",
+            Name: "Thumbnail Output Group",
             OutputGroupSettings: {
               Type: "FILE_GROUP_SETTINGS",
               FileGroupSettings: {
                 Destination: outputPath,
+                DestinationSettings: {
+                  S3Settings: {
+                    AccessControl: {
+                      CannedAcl: "PUBLIC_READ",
+                    },
+                  },
+                },
               },
             },
             Outputs: [
               {
-                NameModifier: `${photoId}_thumb`,
+                NameModifier: outputFileName,
                 ContainerSettings: {
                   Container: "RAW",
                 },
@@ -732,15 +922,11 @@ async function generateVideoThumbnail(videoS3Key, photoId) {
                   },
                   Width: 800,
                   Height: 600,
+                  RespondToAfd: "NONE",
                   ScalingBehavior: "DEFAULT",
                   TimecodeInsertion: "DISABLED",
                   AntiAlias: "ENABLED",
                   Sharpness: 50,
-                  VideoPreprocessors: {
-                    ImageInserter: {
-                      InsertableImages: [],
-                    },
-                  },
                 },
               },
             ],
@@ -749,19 +935,29 @@ async function generateVideoThumbnail(videoS3Key, photoId) {
         TimecodeConfig: {
           Source: "ZEROBASED",
         },
+        AdAvailOffset: 0,
       },
+      BillingTagsSource: "JOB",
+      AccelerationSettings: {
+        Mode: "DISABLED",
+      },
+      StatusUpdateInterval: "SECONDS_60",
+      Priority: 0,
     };
 
-    console.log("🚀 MediaConvert ジョブ作成中...");
+    console.log(`🚀 MediaConvertジョブ作成中...`);
+
     const command = new CreateJobCommand(jobSettings);
     const response = await client.send(command);
 
     console.log(`✅ MediaConvert ジョブ作成成功: ${response.Job.Id}`);
 
-    // ジョブIDを返す（ステータス確認用）
+    // 期待されるサムネイルファイル名
+    const thumbnailKey = `thumbnails/${outputFileName}.0000000.jpg`;
+
     return {
       jobId: response.Job.Id,
-      thumbnailKey: `thumbnails/${photoId}_thumb.0000000.jpg`,
+      thumbnailKey: thumbnailKey,
     };
   } catch (error) {
     console.error("❌ MediaConvert エラー:", error);
@@ -773,18 +969,18 @@ async function generateVideoThumbnail(videoS3Key, photoId) {
 async function generatePlaceholderThumbnail(photoId) {
   try {
     const svg = `<?xml version="1.0" encoding="UTF-8"?>
-<svg width="300" height="300" xmlns="http://www.w3.org/2000/svg">
+<svg width="800" height="600" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" style="stop-color:#667eea;stop-opacity:1" />
       <stop offset="100%" style="stop-color:#764ba2;stop-opacity:1" />
     </linearGradient>
   </defs>
-  <rect width="300" height="300" fill="url(#grad)" />
-  <circle cx="150" cy="150" r="40" fill="rgba(255,255,255,0.9)" />
-  <polygon points="135,135 135,165 165,150" fill="#667eea" />
-  <text x="150" y="200" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="16" font-family="Arial">VIDEO</text>
-  <text x="150" y="220" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="12" font-family="Arial">${photoId.substring(0, 8)}</text>
+  <rect width="800" height="600" fill="url(#grad)" />
+  <circle cx="400" cy="300" r="80" fill="rgba(255,255,255,0.9)" />
+  <polygon points="360,260 360,340 440,300" fill="#667eea" />
+  <text x="400" y="420" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="32" font-family="Arial">VIDEO</text>
+  <text x="400" y="460" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="24" font-family="Arial">${photoId.substring(0, 8)}</text>
 </svg>`;
     return Buffer.from(svg, "utf8");
   } catch (error) {
@@ -792,6 +988,41 @@ async function generatePlaceholderThumbnail(photoId) {
     throw error;
   }
 }
+
+// ✅ MediaConvertジョブ状態確認エンドポイント（新規追加）
+app.get("/photos/thumbnail-status/:jobId", async function (req, res) {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "*");
+
+  try {
+    const { jobId } = req.params;
+
+    const client = await initializeMediaConvertClient();
+
+    const command = new GetJobCommand({ Id: jobId });
+    const response = await client.send(command);
+
+    const job = response.Job;
+    const status = job.Status;
+
+    console.log(`📊 ジョブ ${jobId} ステータス: ${status}`);
+
+    res.json({
+      success: true,
+      jobId: jobId,
+      status: status,
+      progress: job.JobPercentComplete || 0,
+      createdAt: job.CreatedAt,
+      finishedAt: job.FinishedAt,
+    });
+  } catch (error) {
+    console.error("Error checking job status:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
 
 // ✅ デバッグ用：テーブル構造確認エンドポイント（強化版）
 app.get("/debug/photo/:photoId", async function (req, res) {
