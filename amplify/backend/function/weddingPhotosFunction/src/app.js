@@ -640,48 +640,6 @@ async function generatePlaceholderThumbnail(photoId) {
   }
 }
 
-// ✅ プレースホルダー画像生成関数（簡易版）
-async function generatePlaceholderThumbnail(photoId) {
-  // Canvas APIを使った簡易サムネイル生成
-  const Canvas = require("canvas");
-  const canvas = Canvas.createCanvas(300, 300);
-  const ctx = canvas.getContext("2d");
-
-  // グラデーション背景
-  const gradient = ctx.createLinearGradient(0, 0, 300, 300);
-  gradient.addColorStop(0, "#667eea");
-  gradient.addColorStop(1, "#764ba2");
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, 300, 300);
-
-  // 再生ボタン
-  ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
-  ctx.beginPath();
-  ctx.arc(150, 150, 40, 0, Math.PI * 2);
-  ctx.fill();
-
-  // 三角形（再生アイコン）
-  ctx.fillStyle = "#667eea";
-  ctx.beginPath();
-  ctx.moveTo(135, 135);
-  ctx.lineTo(135, 165);
-  ctx.lineTo(165, 150);
-  ctx.closePath();
-  ctx.fill();
-
-  // テキスト
-  ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
-  ctx.font = "16px Arial";
-  ctx.textAlign = "center";
-  ctx.fillText("VIDEO", 150, 200);
-
-  // ID表示（識別用）
-  ctx.font = "12px Arial";
-  ctx.fillText(photoId.substring(0, 8), 150, 220);
-
-  return canvas.toBuffer("image/jpeg", { quality: 0.8 });
-}
-
 // ✅ S3ファイル削除用ヘルパーAPI（緊急時用）
 app.delete("/photos/cleanup-s3/:s3Key", async function (req, res) {
   res.header("Access-Control-Allow-Origin", "*");
