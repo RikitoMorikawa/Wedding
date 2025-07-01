@@ -380,6 +380,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
               </p>
               <p className="text-xs text-gray-500 mt-1">{selectedMediaType === "photo" ? t("file_formats_photo") : t("file_formats_video")}</p>
               {/* ✅ 動画の場合は1件制限と3分対応を明示 */}
+              {selectedMediaType === "photo" && <p className="text-xs text-purple-600 mt-1 font-medium">{t("photo_limit_30")}</p>}
               {selectedMediaType === "video" && <p className="text-xs text-purple-600 mt-1 font-medium">{t("video_limit_3min")}</p>}
             </div>
             <input

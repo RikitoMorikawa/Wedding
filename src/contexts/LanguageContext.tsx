@@ -421,6 +421,10 @@ const translations: Translations = {
     ja: "動画は1件ずつ選択してください",
     en: "Please select videos one at a time",
   },
+  photo_limit_30: {
+    ja: "写真は30枚まで",
+    en: "Up to 30 photos",
+  },
   video_limit_3min: {
     ja: "動画は1件まで",
     en: "Up to 1 video",
