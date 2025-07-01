@@ -119,14 +119,14 @@ app.post("/photos/user", async function (req, res) {
 // amplify/backend/function/weddingPhotosFunction/src/app.js
 // バッチ署名付きURL生成（バランス型設定）
 
-// ✅ バランス型設定
-const MAX_PHOTO_FILES = 20;
-const MAX_VIDEO_FILES = 3;   // 5 → 3に変更
-const MAX_TOTAL_SIZE = 500 * 1024 * 1024; // 500MB
-const MAX_PHOTO_SIZE = 50 * 1024 * 1024;  // 50MB（8MB → 50MB）
-const MAX_VIDEO_SIZE = 200 * 1024 * 1024; // 200MB（50MB → 200MB）
+// ✅ 結婚式70名対応の拡張設定（合計容量制限を削除）
+const MAX_PHOTO_FILES = 30; // 写真: 30ファイル（20→30に拡張）
+const MAX_VIDEO_FILES = 1; // 動画: 1ファイル（3→1に変更）
+const MAX_PHOTO_SIZE = 50 * 1024 * 1024; // 50MB
+const MAX_VIDEO_SIZE = 300 * 1024 * 1024; // 300MB（3分程度の動画対応）
+// MAX_TOTAL_SIZE削除 - 写真と動画は別々投稿のため不要
 
-// ✅ 更新: バッチ署名付きURL生成（バランス型設定）
+// バッチ署名付きURL生成の修正部分
 app.post("/photos/batch-upload-urls", async function (req, res) {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Headers", "*");
@@ -159,7 +159,7 @@ app.post("/photos/batch-upload-urls", async function (req, res) {
       return allowedVideoTypes.includes(file.fileType);
     });
 
-    // 写真枚数チェック
+    // 写真枚数チェック（30枚に拡張）
     if (photoFiles.length > MAX_PHOTO_FILES) {
       return res.status(400).json({
         success: false,
@@ -170,39 +170,14 @@ app.post("/photos/batch-upload-urls", async function (req, res) {
       });
     }
 
-    // ✅ 動画枚数チェック（3個制限）
+    // ✅ 動画枚数チェック（1個制限）
     if (videoFiles.length > MAX_VIDEO_FILES) {
       return res.status(400).json({
         success: false,
-        message: `動画は最大${MAX_VIDEO_FILES}個まで（約1-2分の動画対応）です。現在: ${videoFiles.length}個`,
+        message: `動画は最大${MAX_VIDEO_FILES}個まで（約3分の動画対応）です。現在: ${videoFiles.length}個`,
         errorCode: "TOO_MANY_VIDEOS",
         maxVideos: MAX_VIDEO_FILES,
         currentVideos: videoFiles.length,
-      });
-    }
-
-    // 合計ファイル数チェック
-    if (files.length > Math.max(MAX_PHOTO_FILES, MAX_VIDEO_FILES)) {
-      return res.status(400).json({
-        success: false,
-        message: `合計ファイル数が制限を超えています`,
-        errorCode: "TOO_MANY_FILES",
-      });
-    }
-
-    // 合計サイズチェック
-    let totalSize = 0;
-    for (const file of files) {
-      totalSize += file.size || 0;
-    }
-
-    if (totalSize > MAX_TOTAL_SIZE) {
-      return res.status(400).json({
-        success: false,
-        message: `合計ファイルサイズが制限を超えています。制限: ${(MAX_TOTAL_SIZE / (1024 * 1024)).toFixed(0)}MB、現在: ${(totalSize / (1024 * 1024)).toFixed(1)}MB`,
-        errorCode: "TOTAL_SIZE_EXCEEDED",
-        maxTotalSizeMB: Math.floor(MAX_TOTAL_SIZE / (1024 * 1024)),
-        currentTotalSizeMB: parseFloat((totalSize / (1024 * 1024)).toFixed(1)),
       });
     }
 
@@ -211,6 +186,7 @@ app.post("/photos/batch-upload-urls", async function (req, res) {
     const allAllowedTypes = [...allowedPhotoTypes, ...allowedVideoTypes];
 
     const uploadUrls = [];
+    let totalSize = 0; // レスポンス用の集計のみ
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
@@ -226,12 +202,12 @@ app.post("/photos/batch-upload-urls", async function (req, res) {
         });
       }
 
-      // ✅ 個別ファイルサイズチェック（バランス型設定）
+      // ✅ 個別ファイルサイズチェック（更新された設定）
       const isVideo = allowedVideoTypes.includes(file.fileType);
       const maxSize = isVideo ? MAX_VIDEO_SIZE : MAX_PHOTO_SIZE;
       const mediaType = isVideo ? "動画" : "写真";
-      const maxSizeText = isVideo ? "200MB" : "50MB";
-      const description = isVideo ? "（約1-2分対応）" : "（プロ撮影対応）";
+      const maxSizeText = isVideo ? "300MB" : "50MB"; // 300MBに更新
+      const description = isVideo ? "（約3分対応）" : "（プロ撮影対応）"; // 説明更新
       
       if (file.size > maxSize) {
         return res.status(400).json({
@@ -244,6 +220,9 @@ app.post("/photos/batch-upload-urls", async function (req, res) {
           mediaType: isVideo ? "video" : "photo",
         });
       }
+
+      // レスポンス用のサイズ集計
+      totalSize += file.size || 0;
 
       // S3キー生成
       const timestamp = Date.now();
@@ -275,14 +254,14 @@ app.post("/photos/batch-upload-urls", async function (req, res) {
       totalFiles: files.length,
       photoFiles: photoFiles.length,
       videoFiles: videoFiles.length,
-      totalSize: totalSize,
+      totalSize: totalSize, // 情報表示用のみ
       expiresIn: 600,
       limits: {
         maxPhotos: MAX_PHOTO_FILES,
         maxVideos: MAX_VIDEO_FILES,
         maxPhotoSizeMB: Math.floor(MAX_PHOTO_SIZE / (1024 * 1024)),
         maxVideoSizeMB: Math.floor(MAX_VIDEO_SIZE / (1024 * 1024)),
-        maxTotalSizeMB: Math.floor(MAX_TOTAL_SIZE / (1024 * 1024)),
+        // maxTotalSizeMB削除 - 合計制限なし
       },
     });
 
@@ -296,7 +275,7 @@ app.post("/photos/batch-upload-urls", async function (req, res) {
   }
 });
 
-// ✅ 更新: バッチアルバム保存（バランス型設定）
+// バッチアルバム保存の修正部分
 app.post("/photos/batch-save-album", async function (req, res) {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Headers", "*");
@@ -329,7 +308,7 @@ app.post("/photos/batch-save-album", async function (req, res) {
       });
     }
 
-    // ✅ サーバーサイドでも制限を再チェック（バランス型設定）
+    // ✅ サーバーサイドでも制限を再チェック（更新された設定）
     const photoFiles = files.filter(file => file.mediaType === "photo");
     const videoFiles = files.filter(file => file.mediaType === "video");
 
@@ -346,7 +325,7 @@ app.post("/photos/batch-save-album", async function (req, res) {
     if (videoFiles.length > MAX_VIDEO_FILES) {
       return res.status(400).json({
         success: false,
-        message: `動画は最大${MAX_VIDEO_FILES}個まで（約1-2分の動画対応）です`,
+        message: `動画は最大${MAX_VIDEO_FILES}個まで（約3分の動画対応）です`,
         errorCode: "TOO_MANY_VIDEOS",
         maxVideos: MAX_VIDEO_FILES,
         currentVideos: videoFiles.length,

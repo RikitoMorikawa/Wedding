@@ -1,9 +1,9 @@
-// src/components/PhotoUpload.tsx - エラーメッセージをインライン表示
+// src/components/PhotoUpload.tsx - 動画投稿を1件に制限（完全書き直し版）
 "use client";
 
 import { useState, useRef } from "react";
 import { Amplify } from "aws-amplify";
-import { getCurrentUser } from "aws-amplify/auth";
+import { fetchAuthSession } from "aws-amplify/auth";
 import { v4 as uuidv4 } from "uuid";
 import awsconfig from "../aws-exports";
 import WeddingConfirmDialog from "./WeddingConfirmDialog";
@@ -28,34 +28,30 @@ interface SelectedFile {
 // エラータイプの定義
 type ErrorType = "file_count" | "file_size" | "total_size" | "file_type" | null;
 
-// ✅ バランス型設定
-const MAX_PHOTO_FILES = 20; // 写真: 20ファイル
-const MAX_VIDEO_FILES = 3; // 動画: 3ファイル
+// ✅ 結婚式70名対応の拡張設定（合計容量制限を削除）
+const MAX_PHOTO_FILES = 30; // 写真: 30ファイル（20→30に拡張）
+const MAX_VIDEO_FILES = 1; // 動画: 1ファイル
 const MAX_PHOTO_SIZE = 50 * 1024 * 1024; // 50MB
-const MAX_VIDEO_SIZE = 200 * 1024 * 1024; // 200MB
-const MAX_TOTAL_SIZE = 500 * 1024 * 1024; // 500MB
+const MAX_VIDEO_SIZE = 300 * 1024 * 1024; // 300MB（3分程度の動画対応）
 
 export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaType }: PhotoUploadProps) {
   const [uploading, setUploading] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<SelectedFile[]>([]);
   const [caption, setCaption] = useState("");
   const [showWeddingConfirm, setShowWeddingConfirm] = useState(false);
-  // 🆕 エラー管理用の状態
   const [errorType, setErrorType] = useState<ErrorType>(null);
   const [errorDetails, setErrorDetails] = useState<string>("");
 
-  // 🆕 多言語対応
   const { t } = useLanguage();
-
   const buttonRef = useRef<HTMLButtonElement>(null);
   const API_BASE = awsconfig.aws_cloud_logic_custom[0].endpoint;
 
   // ✅ メディアタイプ別の制限値を取得
   const getMaxFiles = () => (selectedMediaType === "photo" ? MAX_PHOTO_FILES : MAX_VIDEO_FILES);
   const getMaxSize = () => (selectedMediaType === "photo" ? MAX_PHOTO_SIZE : MAX_VIDEO_SIZE);
-  const getMaxSizeText = () => (selectedMediaType === "photo" ? "50MB" : "200MB");
+  const getMaxSizeText = () => (selectedMediaType === "photo" ? "50MB" : "300MB");
 
-  // 🆕 エラーをクリアする関数
+  // エラーをクリアする関数
   const clearError = () => {
     setErrorType(null);
     setErrorDetails("");
@@ -63,7 +59,7 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
 
   // ファイル選択処理
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
-    clearError(); // エラーをクリア
+    clearError();
 
     const files = Array.from(event.target.files || []);
     const maxFiles = getMaxFiles();
@@ -75,28 +71,46 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
       validFiles = files.filter((file) => file.type.startsWith("image/"));
       if (validFiles.length !== files.length) {
         setErrorType("file_type");
-        setErrorDetails(t("photo_files_only"));
+        setErrorDetails("写真ファイルのみ選択できます");
         return;
       }
     } else if (selectedMediaType === "video") {
       validFiles = files.filter((file) => file.type.startsWith("video/"));
       if (validFiles.length !== files.length) {
         setErrorType("file_type");
-        setErrorDetails(t("video_files_only"));
+        setErrorDetails("動画ファイルのみ選択できます");
         return;
       }
     }
 
     if (validFiles.length === 0) {
       setErrorType("file_type");
-      setErrorDetails(t("select_file_type").replace("ファイル", selectedMediaType === "photo" ? t("image") : t("video")));
+      setErrorDetails("ファイルを選択してください");
+      return;
+    }
+
+    // ✅ 動画の場合は既に選択済みファイルがあれば警告
+    if (selectedMediaType === "video" && selectedFiles.length > 0) {
+      setErrorType("file_count");
+      setErrorDetails("動画は1件までアップロードできます");
+      return;
+    }
+
+    // ✅ 動画の場合は複数選択を防ぐ
+    if (selectedMediaType === "video" && validFiles.length > 1) {
+      setErrorType("file_count");
+      setErrorDetails("動画は1件ずつ選択してください");
       return;
     }
 
     // メディアタイプ別枚数制限チェック
     if (selectedFiles.length + validFiles.length > maxFiles) {
       setErrorType("file_count");
-      setErrorDetails(`${maxFiles}${t("files_count")}まで`);
+      if (selectedMediaType === "video") {
+        setErrorDetails("動画は1件までアップロードできます");
+      } else {
+        setErrorDetails(`${maxFiles}個まで`);
+      }
       return;
     }
 
@@ -108,18 +122,6 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
       const maxSizeText = getMaxSizeText();
       setErrorType("file_size");
       setErrorDetails(`${maxSizeText}まで`);
-      return;
-    }
-
-    // 合計サイズチェック
-    const currentTotalSize = selectedFiles.reduce((sum, file) => sum + file.file.size, 0);
-    const newFilesTotalSize = validFiles.reduce((sum, file) => sum + file.size, 0);
-    const totalSize = currentTotalSize + newFilesTotalSize;
-
-    if (totalSize > MAX_TOTAL_SIZE) {
-      const maxTotalSizeMB = (MAX_TOTAL_SIZE / (1024 * 1024)).toFixed(0);
-      setErrorType("total_size");
-      setErrorDetails(`合計${maxTotalSizeMB}MBまで`);
       return;
     }
 
@@ -156,28 +158,9 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
       requestAnimationFrame(() => {
         if (buttonRef.current) {
           buttonRef.current.classList.add("animate");
-          setTimeout(() => {
-            if (buttonRef.current) {
-              buttonRef.current.classList.remove("animate");
-            }
-          }, 700);
         }
       });
     }
-  };
-
-  const handleUploadClick = () => {
-    if (selectedFiles.length === 0) return;
-    setShowWeddingConfirm(true);
-  };
-
-  const handleWeddingConfirm = () => {
-    setShowWeddingConfirm(false);
-    performBatchUpload();
-  };
-
-  const handleWeddingCancel = () => {
-    setShowWeddingConfirm(false);
   };
 
   // ✅ シンプルなバッチアップロード処理
@@ -189,7 +172,13 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
     clearError();
 
     try {
-      const user = await getCurrentUser();
+      const session = await fetchAuthSession();
+      const token = session.tokens?.accessToken?.toString();
+
+      if (!token) {
+        throw new Error("認証トークンが取得できませんでした");
+      }
+
       const albumId = uuidv4();
       const uploadedAt = new Date().toISOString();
 
@@ -205,10 +194,13 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
       console.log("🔄 署名付きURLを一括取得中...");
       const urlResponse = await fetch(`${API_BASE}/photos/batch-upload-urls`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
         body: JSON.stringify({
           files: filesInfo,
-          passcode: user.username,
+          passcode: userInfo.passcode,
         }),
       });
 
@@ -270,15 +262,18 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
       console.log("🔄 バッチでメタデータ保存中...");
       const saveResponse = await fetch(`${API_BASE}/photos/batch-save-album`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
         body: JSON.stringify({
           albumId: albumId,
-          uploadedBy: user.username,
+          uploadedBy: userInfo.passcode,
           uploaderName: userInfo.name,
           caption: caption,
           uploadedAt: uploadedAt,
           files: successfulUploads,
-          passcode: user.username,
+          passcode: userInfo.passcode,
         }),
       });
 
@@ -324,11 +319,21 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
     }
   };
 
-  const totalFileSize = selectedFiles.reduce((sum, file) => sum + file.file.size, 0) / (1024 * 1024);
-  const maxTotalSizeMB = MAX_TOTAL_SIZE / (1024 * 1024);
-  const maxFiles = getMaxFiles();
+  const handleUploadClick = () => {
+    if (selectedFiles.length === 0) return;
+    setShowWeddingConfirm(true);
+  };
 
-  // 🆕 エラーメッセージを取得する関数
+  const handleWeddingConfirm = () => {
+    setShowWeddingConfirm(false);
+    performBatchUpload();
+  };
+
+  const handleWeddingCancel = () => {
+    setShowWeddingConfirm(false);
+  };
+
+  // エラーメッセージを取得する関数
   const getErrorMessage = () => {
     if (!errorType) return null;
 
@@ -346,49 +351,53 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
     }
   };
 
+  const maxFiles = getMaxFiles();
+
   return (
     <>
       <div className="space-y-4">
         {/* ファイル選択エリア */}
         <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-3">
-            {selectedMediaType === "photo" ? t("photo") : t("video")}
-            {t("select_files")} ({selectedFiles.length}/{maxFiles}
-            {t("files_count")})
-            {selectedFiles.length > 0 && (
-              <span className={`text-xs ml-2 ${totalFileSize > maxTotalSizeMB * 0.8 ? "text-orange-600" : "text-gray-500"}`}>
-                ({totalFileSize.toFixed(1)}MB / {maxTotalSizeMB}MB)
-              </span>
-            )}
-          </label>
-
           <label
             htmlFor="file-input"
-            className={`flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-2xl cursor-pointer transition-colors ${
-              errorType ? "border-red-400 bg-red-50/50 hover:bg-red-50" : "border-pink-300 bg-pink-50/50 hover:bg-pink-50"
-            }`}
+            className={`
+              block w-full p-4 border-2 border-dashed rounded-2xl text-center cursor-pointer transition-all duration-200 transform hover:scale-[1.02] active:scale-[0.98]
+              ${
+                uploading
+                  ? "border-gray-300 bg-gray-100 cursor-not-allowed"
+                  : errorType
+                  ? "border-red-400 bg-red-50/50 hover:bg-red-50"
+                  : "border-pink-300 bg-pink-50/50 hover:bg-pink-50"
+              }
+            `}
           >
             <div className="flex flex-col items-center justify-center py-3">
               <div className="text-3xl mb-2">{selectedMediaType === "photo" ? "📷" : "🎥"}</div>
               <p className={`text-sm font-medium ${errorType ? "text-red-600" : "text-pink-600"}`}>
                 {selectedFiles.length === 0
-                  ? `${selectedMediaType === "photo" ? t("photo") : t("video")}${t("tap_to_select")}`
-                  : `${selectedMediaType === "photo" ? t("photo") : t("video")}${t("add_files")}`}
+                  ? `${selectedMediaType === "photo" ? "写真" : "動画"}をタップして選択`
+                  : `${selectedMediaType === "photo" ? "写真" : "動画"}を追加`}
               </p>
               <p className="text-xs text-gray-500 mt-1">{selectedMediaType === "photo" ? t("file_formats_photo") : t("file_formats_video")}</p>
+              {/* ✅ 動画の場合は1件制限と3分対応を明示 */}
+              {selectedMediaType === "video" && (
+                <p className="text-xs text-purple-600 mt-1 font-medium">
+                  動画は1件まで・約3分程度まで対応
+                </p>
+              )}
             </div>
             <input
               id="file-input"
               type="file"
               accept={selectedMediaType === "photo" ? "image/*" : "video/*"}
-              multiple
+              multiple={selectedMediaType === "photo"} // ✅ 動画の場合はmultipleを無効化
               onChange={handleFileSelect}
               className="hidden"
               disabled={selectedFiles.length >= maxFiles || uploading}
             />
           </label>
 
-          {/* 🆕 エラーメッセージ表示エリア */}
+          {/* エラーメッセージ表示エリア */}
           {errorType && (
             <div className="mt-2 p-3 bg-red-50 border border-red-200 rounded-lg flex items-start">
               <svg className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -417,34 +426,36 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
             <div className="mb-2">
               <h3 className="text-sm font-semibold text-gray-700 mb-1">
                 {t("selected_files")}
-                {selectedMediaType === "photo" ? t("photo") : t("video")} ({selectedFiles.length}/{maxFiles}
-                {t("files_count")}){selectedFiles.length === maxFiles && <span className="ml-2 text-xs text-orange-600">{t("limit_reached")}</span>}
+                {selectedMediaType === "photo" ? t("main_photo") : t("main_video")}
               </h3>
-              <div className="text-right">
-                <button onClick={removeAllFiles} className="text-xs text-red-500 hover:text-red-700 font-medium" disabled={uploading}>
-                  {t("remove_all")}
-                </button>
+              <div className="flex justify-between text-xs text-gray-600 items-center">
+                <span>
+                  {selectedFiles.length}/{maxFiles} {t("files_count")}
+                </span>
+                {selectedFiles.length > 1 && (
+                  <button onClick={removeAllFiles} className="text-red-500 hover:text-red-700 font-medium" disabled={uploading}>
+                    {t("clear_all")}
+                  </button>
+                )}
               </div>
             </div>
-            <div className="space-y-2 max-h-40 overflow-y-auto">
+
+            <div className="space-y-2 max-h-32 overflow-y-auto">
               {selectedFiles.map((selectedFile, index) => (
                 <div key={selectedFile.id} className="flex items-center justify-between bg-white rounded-lg p-2">
-                  <div className="flex items-center space-x-2">
-                    <div className="w-8 h-8 rounded-lg overflow-hidden bg-gray-100">
-                      {selectedFile.mediaType === "photo" ? (
-                        <img src={selectedFile.preview} alt="preview" className="w-full h-full object-cover" />
-                      ) : (
-                        <video src={selectedFile.preview} className="w-full h-full object-cover" muted />
-                      )}
+                  <div className="flex items-center space-x-2 flex-1 min-w-0">
+                    <div className="w-8 h-8 bg-pink-100 rounded flex items-center justify-center flex-shrink-0">
+                      <span className="text-xs">{selectedFile.mediaType === "photo" ? "📷" : "🎥"}</span>
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center space-x-1">
-                        {index === 0 && <span className="text-pink-600 text-xs font-bold">★</span>}
-                        <p className="text-xs font-medium text-gray-800 truncate">{selectedFile.file.name}</p>
-                      </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-gray-700 truncate">{selectedFile.file.name}</p>
                       <p className="text-xs text-gray-500">
                         {(selectedFile.file.size / (1024 * 1024)).toFixed(1)}MB
-                        {index === 0 && <span className="ml-1 text-pink-600">{selectedMediaType === "photo" ? t("main_photo") : t("main_video")}</span>}
+                        {index === 0 && selectedFiles.length > 1 && (
+                          <span className="ml-1 text-pink-600">
+                            {selectedMediaType === "photo" ? t("main_photo") : t("main_video")}
+                          </span>
+                        )}
                       </p>
                     </div>
                   </div>
