@@ -507,79 +507,100 @@ app.post("/photos/batch-save-album", async function (req, res) {
 });
 
 // ✅ 修正版：generate-thumbnailエンドポイント
-// ✅ 最終修正版：generate-thumbnailエンドポイント
-// DynamoDB複合キー（photoId + uploadedAt）対応版
-
 app.post("/photos/generate-thumbnail", async function (req, res) {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Headers", "*");
 
   try {
-    const { photoId, videoS3Key } = req.body;
+    const { photoId, videoS3Key, uploadedAt } = req.body;
+
+    console.log(`🔍 generate-thumbnail リクエスト受信:`, { photoId, videoS3Key, uploadedAt });
 
     if (!photoId || !videoS3Key) {
       return res.status(400).json({
         success: false,
-        message: "photoId and videoS3Key are required",
+        message: "Missing required fields: photoId or videoS3Key",
       });
     }
 
-    console.log(`🎬 サムネイル生成開始: photoId=${photoId}`);
+    // デバッグ: テーブル名を確認
+    console.log(`📊 Photos テーブル名: ${process.env.STORAGE_PHOTOS_NAME}`);
 
-    const thumbnailS3Key = `thumbnails/${photoId}_thumbnail.jpg`;
+    // まず、photoIdで検索してみる（GetCommandの代わりにScanを使用）
+    let existingPhoto = null;
 
-    // ✅ Step 1: 複合キー対応の検索
-    let existingPhoto;
     try {
-      console.log(`🔍 複合キーテーブル対応でphotoId=${photoId}を検索中...`);
-
-      // 複合キーテーブルの場合、Scanで検索（uploadedAtが不明なため）
+      // ScanCommandを使用してphotoIdでフィルタリング
       const scanCommand = new ScanCommand({
         TableName: process.env.STORAGE_PHOTOS_NAME,
         FilterExpression: "photoId = :photoId",
         ExpressionAttributeValues: {
           ":photoId": photoId,
         },
-        Limit: 1,
       });
 
+      console.log(`🔍 Scanコマンド実行中...`);
       const scanResult = await docClient.send(scanCommand);
-      const items = scanResult.Items || [];
 
-      if (items.length > 0) {
-        existingPhoto = items[0];
-        console.log(`✅ 写真レコード発見: photoId=${existingPhoto.photoId}, uploadedAt=${existingPhoto.uploadedAt}`);
+      console.log(`📊 Scan結果: ${scanResult.Items?.length || 0}件のアイテムが見つかりました`);
+
+      if (scanResult.Items && scanResult.Items.length > 0) {
+        existingPhoto = scanResult.Items[0];
+        console.log(`✅ 写真レコード発見:`, {
+          photoId: existingPhoto.photoId,
+          uploadedAt: existingPhoto.uploadedAt,
+          mediaType: existingPhoto.mediaType,
+          s3Key: existingPhoto.s3Key,
+        });
       } else {
         console.error(`❌ 写真が見つかりません: photoId=${photoId}`);
-        return res.status(404).json({
-          success: false,
-          message: `Photo not found: ${photoId}`,
-          debug: {
-            tableName: process.env.STORAGE_PHOTOS_NAME,
-            searchMethod: "scan_with_filter",
-            photoId: photoId,
-          },
+
+        // デバッグ: テーブル内の全データを確認（開発環境のみ）
+        const debugScan = new ScanCommand({
+          TableName: process.env.STORAGE_PHOTOS_NAME,
+          Limit: 5, // 最初の5件のみ
         });
+        const debugResult = await docClient.send(debugScan);
+        console.log(
+          `🐛 テーブル内のサンプルデータ:`,
+          debugResult.Items?.map((item) => ({
+            photoId: item.photoId,
+            uploadedAt: item.uploadedAt,
+          }))
+        );
       }
-    } catch (searchError) {
-      console.error(`❌ 写真検索エラー:`, searchError);
+    } catch (scanError) {
+      console.error(`❌ DynamoDB Scanエラー:`, scanError);
       return res.status(500).json({
         success: false,
-        message: `Failed to find photo: ${searchError.message}`,
+        message: `Database scan error: ${scanError.message}`,
         debug: {
-          error: searchError.name,
+          error: scanError.name,
           photoId: photoId,
         },
       });
     }
 
-    // ✅ Step 2: 処理状態を'processing'に更新
+    if (!existingPhoto) {
+      return res.status(404).json({
+        success: false,
+        message: `Photo not found: ${photoId}`,
+        debug: {
+          photoId: photoId,
+          tableName: process.env.STORAGE_PHOTOS_NAME,
+          searchMethod: "scan_with_filter",
+        },
+      });
+    }
+
+    // 以下、既存のサムネイル生成処理...
+    const thumbnailS3Key = `thumbnails/${photoId}_thumbnail.svg`;
+
+    // 処理状態を更新
     try {
       const updatedPhoto = {
         ...existingPhoto,
         processingStatus: "processing",
-        thumbnailS3Key: thumbnailS3Key,
-        updatedAt: new Date().toISOString(),
       };
 
       const putCommand = new PutCommand({
@@ -588,71 +609,38 @@ app.post("/photos/generate-thumbnail", async function (req, res) {
       });
 
       await docClient.send(putCommand);
-      console.log(`✅ 処理状態を'processing'に更新: ${photoId}`);
+      console.log(`✅ 処理状態を'processing'に更新`);
     } catch (updateError) {
       console.error(`❌ 処理状態更新エラー:`, updateError);
-      return res.status(500).json({
-        success: false,
-        message: `Failed to update processing status: ${updateError.message}`,
-      });
     }
 
-    // ✅ Step 3: SVGサムネイル生成
-    let placeholderImageBuffer;
-    try {
-      placeholderImageBuffer = await generatePlaceholderThumbnail(photoId);
-      console.log(`✅ SVGサムネイル生成完了: ${placeholderImageBuffer.length}バイト`);
-    } catch (imageError) {
-      console.error(`❌ サムネイル生成エラー:`, imageError);
-      return res.status(500).json({
-        success: false,
-        message: `Failed to generate thumbnail: ${imageError.message}`,
-      });
-    }
+    // SVGサムネイル生成
+    const placeholderImageBuffer = await generatePlaceholderThumbnail(photoId);
 
-    // ✅ Step 4: S3アップロード
-    try {
-      const uploadResult = await s3
-        .upload({
-          Bucket: process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME,
-          Key: `public/${thumbnailS3Key}`,
-          Body: placeholderImageBuffer,
-          ContentType: "image/svg+xml",
-        })
-        .promise();
+    // S3アップロード
+    await s3
+      .upload({
+        Bucket: process.env.STORAGE_WEDDINGPHOTOS_BUCKETNAME,
+        Key: `public/${thumbnailS3Key}`,
+        Body: placeholderImageBuffer,
+        ContentType: "image/svg+xml",
+      })
+      .promise();
 
-      console.log(`✅ S3アップロード完了: ${uploadResult.Location}`);
-    } catch (s3Error) {
-      console.error(`❌ S3アップロードエラー:`, s3Error);
-      return res.status(500).json({
-        success: false,
-        message: `Failed to upload to S3: ${s3Error.message}`,
-      });
-    }
+    // 完了状態に更新
+    const completedPhoto = {
+      ...existingPhoto,
+      processingStatus: "ready",
+      thumbnailS3Key: thumbnailS3Key,
+      updatedAt: new Date().toISOString(),
+    };
 
-    // ✅ Step 5: 完了状態に更新
-    try {
-      const completedPhoto = {
-        ...existingPhoto,
-        processingStatus: "ready",
-        thumbnailS3Key: thumbnailS3Key,
-        updatedAt: new Date().toISOString(),
-      };
+    const completePutCommand = new PutCommand({
+      TableName: process.env.STORAGE_PHOTOS_NAME,
+      Item: completedPhoto,
+    });
 
-      const completePutCommand = new PutCommand({
-        TableName: process.env.STORAGE_PHOTOS_NAME,
-        Item: completedPhoto,
-      });
-
-      await docClient.send(completePutCommand);
-      console.log(`✅ 処理状態を'ready'に更新: ${photoId}`);
-    } catch (completeError) {
-      console.error(`❌ 完了状態更新エラー:`, completeError);
-      return res.status(500).json({
-        success: false,
-        message: `Failed to update completion status: ${completeError.message}`,
-      });
-    }
+    await docClient.send(completePutCommand);
 
     res.json({
       success: true,
@@ -660,9 +648,8 @@ app.post("/photos/generate-thumbnail", async function (req, res) {
       thumbnailS3Key: thumbnailS3Key,
       photoId: photoId,
       debug: {
-        tableStructure: "composite_key_photoId_uploadedAt",
-        searchMethod: "scan_filter",
-        originalUploadedAt: existingPhoto.uploadedAt,
+        foundPhoto: true,
+        uploadedAt: existingPhoto.uploadedAt,
       },
     });
   } catch (error) {

@@ -290,29 +290,47 @@ export default function PhotoUpload({ onUploadSuccess, userInfo, selectedMediaTy
       // ✅ Step 4: 動画のサムネイル生成をトリガー（ここに移動）
       const videoFiles = successfulUploads.filter((result) => result.mediaType === "video");
 
+      // performBatchUpload関数内のサムネイル生成部分にデバッグログを追加
+
       if (videoFiles.length > 0) {
         console.log(`🎬 ${videoFiles.length}個の動画のサムネイル生成を開始...`);
 
+        // デバッグ: 動画ファイルの詳細情報をログ出力
+        console.log("📹 動画ファイル詳細:", videoFiles);
+
         for (const videoFile of videoFiles) {
           try {
+            // デバッグ: リクエストボディをログ出力
+            const requestBody = {
+              photoId: videoFile.photoId,
+              videoS3Key: videoFile.s3Key,
+              uploadedAt: uploadedAt, // uploadedAtも送信してみる
+            };
+            console.log(`🔍 サムネイル生成リクエスト:`, requestBody);
+
             const thumbnailResponse = await fetch(`${API_BASE}/photos/generate-thumbnail`, {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
                 Authorization: `Bearer ${token}`,
               },
-              body: JSON.stringify({
-                photoId: videoFile.photoId,
-                videoS3Key: videoFile.s3Key,
-              }),
+              body: JSON.stringify(requestBody),
             });
 
             const thumbnailResult = await thumbnailResponse.json();
+
+            // デバッグ: レスポンス詳細をログ出力
+            console.log(`📊 サムネイル生成レスポンス:`, thumbnailResult);
 
             if (thumbnailResult.success) {
               console.log(`✅ サムネイル生成完了: ${videoFile.fileName}`);
             } else {
               console.warn(`⚠️ サムネイル生成失敗: ${videoFile.fileName}`, thumbnailResult.message);
+
+              // デバッグ: エラーの詳細情報
+              if (thumbnailResult.debug) {
+                console.log(`🐛 デバッグ情報:`, thumbnailResult.debug);
+              }
             }
           } catch (error) {
             console.error(`❌ サムネイル生成エラー: ${videoFile.fileName}`, error);
