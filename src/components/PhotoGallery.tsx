@@ -284,7 +284,7 @@ const AlbumItem = memo(({ album, onClick, isOwner }: { album: Album; onClick: ()
       {/* 動画識別バッジ */}
       {isVisible && album.mainPhoto?.mediaType === "video" && (
         <div className="absolute top-2 right-2">
-          <div className="bg-purple-600/90 backdrop-blur-sm rounded-lg px-2 py-1 flex items-center space-x-1">
+          <div className=" backdrop-blur-sm rounded-lg px-2 py-1 flex items-center space-x-1">
             <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 24 24">
               <path d="M8 5v14l11-7z" />
             </svg>
